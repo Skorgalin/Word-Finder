@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Word Finder Game</title>
+<style>
+body { font-family: Arial; padding:20px; }
+input, button { font-size:16px; margin:5px; outline:none; }
+#foundWindow, #adminPanel { display:none; border:1px solid #000; padding:10px; margin-top:10px; max-height:300px; overflow-y:auto; }
+
+.ultraBox{
+  position:fixed;
+  top:20%;
+  left:50%;
+  transform:translateX(-50%);
+  background:white;
+  padding:20px;
+  border:3px solid gold;
+  animation:glow 1.5s infinite alternate;
+  z-index:999;
+  text-align:center;
+}
+@keyframes glow{
+  from{box-shadow:0 0 10px gold;}
+  to{box-shadow:0 0 30px gold;}
+}
+
+.announcement{
+  position:fixed;
+  top:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background:white;
+  padding:8px 12px;
+  margin-top:5px;
+  border:1px solid #000;
+  opacity:1;
+  transition: opacity 1s;
+  z-index:1000;
+}
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<!-- Login -->
+<div id="loginDiv">
+  <input type="email" id="email" placeholder="E-Mail">
+  <input type="password" id="password" placeholder="Passwort">
+  <button onclick="login()">Anmelden</button>
+</div>
+
+<!-- Code Eingabe für Admin -->
+<div id="codeDiv" style="display:none;">
+  <input type="text" id="codeInput" placeholder="6-stelliger Code">
+  <button onclick="verifyCode()">Code bestätigen</button>
+</div>
+
+<!-- Gameplay -->
+<div id="gameDiv" style="display:none;">
+  <input type="text" id="inputField" placeholder="Tippe etwas...">
+  <button onclick="submitInput()">Enter</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="showAdminPanel()">Admin</button>
+  <div id="foundWindow"></div>
+  <div id="adminPanel"></div>
+</div>
+
+<div id="announcementContainer"></div>
+
+<script>
+const ultraRare = ["🌟","💎","✨"];
+let email="", admin=false, found={}, items={}, announcements=[];
+
+// --- Login / Code ---
+function login(){
+  email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+  if(!email || !password){ alert("Alles ausfüllen!"); return; }
+
+  fetch("/login",{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,password}) })
+  .then(res=>res.json()).then(data=>{
+    if(!data.success){ alert(data.msg); return; }
+    if(data.admin){
+      document.getElementById("loginDiv").style.display="none";
+      document.getElementById("codeDiv").style.display="block";
+      alert("6-stelliger Code an Admin-E-Mail gesendet!");
+    } else {
+      document.getElementById("loginDiv").style.display="none";
+      document.getElementById("gameDiv").style.display="block";
+    }
+  });
+}
+
+function verifyCode(){
+  const code=document.getElementById("codeInput").value.trim();
+  fetch("/verify",{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email, code}) })
+  .then(res=>res.json()).then(data=>{
+    if(!data.success){ alert("Falscher Code"); return; }
+    admin=true;
+    document.getElementById("codeDiv").style.display="none";
+    document.getElementById("gameDiv").style.display="block";
+    document.getElementById("adminBtn").style.display="inline-block";
+  });
+}
+
+// --- Word-Finder Spiel + Admin Dashboard ---
+// Hier kommt dein kompletter Word-Finder Code rein:
+// submitInput(), toggleFound(), showAdminPanel(), renderFound(), Kategorien, Ultraselten, Ankündigungen usw.
+
+</script>
+
+</body>
+</html>
