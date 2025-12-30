@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Random Word Game</title>
+<style>
+body { font-family: Arial; background: #fff; color: #000; margin:0; padding:10px; }
+#loginDiv, #gameDiv { max-width: 500px; margin:auto; font-size: 18px; }
+#foundWindow { display:none; border:1px solid #000; padding:10px; max-height:200px; overflow-y:auto; margin-top:10px; font-size: 16px; }
+input, button { font-size: 18px; }
+input:focus { outline:none; } /* blaue Markierung weg */
+.announcement { position:fixed; top:10px; left:50%; transform:translateX(-50%); background:white; color:black; padding:5px 10px; border-radius:5px; margin-top:5px; opacity:1; transition:opacity 1s; font-size:16px; z-index:9999; }
+</style>
+</head>
+<body>
+
+<h1 style="text-align:center;">Random Word Game</h1>
+
+<div id="loginDiv">
+  <input type="text" id="nickname" placeholder="Nickname"><br>
+  <input type="email" id="email" placeholder="E-Mail"><br>
+  <input type="password" id="password" placeholder="Passwort"><br>
+  <button onclick="register()">Login / Register</button>
+</div>
+
+<div id="gameDiv" style="display:none;">
+  <input type="text" id="inputField" placeholder="Tippe etwas">
+  <button onclick="submitInput()">Enter</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="openAdmin()">Admin Suche</button>
+  <button id="announceBtn" style="display:none;" onclick="adminAnnounce()">Ankündigung</button>
+  <div id="foundWindow"></div>
+</div>
+
+<div id="announcementContainer"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let user = null;
+let found = {};
+let items = {};
+const ultraRare = ["🌟","💎","✨"];
+const ADMIN_EMAIL = "till.behner@icloud.com";
+const ADMIN_PASSWORD = "X9$QvR7!eM2#A8wK@C";
+
+// --- Register / Login ---
+function register(){
+  const nick = document.getElementById("nickname").value.trim();
+  const mail = document.getElementById("email").value.trim();
+  const pass = document.getElementById("password").value.trim();
+  if(!nick || !mail || !pass){ alert("Alles ausfüllen!"); return; }
+  user = {nickname:nick,email:mail,password:pass};
+  document.getElementById("loginDiv").style.display="none";
+  document.getElementById("gameDiv").style.display="block";
+  alert("Eingeloggt als "+nick);
+  if(mail===ADMIN_EMAIL) {
+    document.getElementById("adminBtn").style.display="inline-block";
+    document.getElementById("announceBtn").style.display="inline-block";
+  }
+}
+
+// --- Item Handling ---
+function submitInput(){
+  const input = document.getElementById("inputField").value.trim();
+  if(!input) return;
+  document.getElementById("inputField").value="";
+  fetch(`/getItem/${input}/${user.email===ADMIN_EMAIL?"ADMIN":user.nickname}`)
+    .then(r=>r.json())
+    .then(d=>{
+      if(!found[input] && user.email!==ADMIN_EMAIL) {
+        found[input] = d.value;
+      }
+      items[input] = d.value;
+      updateFoundWindow();
+    });
+}
+
+function updateFoundWindow(){
+  const fw = document.getElementById("foundWindow");
+  fw.innerHTML = "<h3>Found Items:</h3>";
+  for(let k in found){
+    fw.innerHTML += `<b>${k}</b> -> ${found[k]} <span style="color:red;">First Discovery</span><br>`;
+  }
+}
+
+function toggleFound(){
+  const fw = document.getElementById("foundWindow");
+  fw.style.display = fw.style.display==="none"?"block":"none";
+}
+
+// --- Admin ---
+let adminLogged=false;
+function openAdmin(){
+  if(!adminLogged){
+    const pass = prompt("Admin Passwort eingeben:");
+    if(pass!==ADMIN_PASSWORD){ alert("Falsches Passwort!"); return; }
+    adminLogged=true;
+    alert("Angemeldet als Admin");
+  }
+  const searchItem = prompt("Item suchen (zeigt Eingabetext):");
+  if(searchItem){
+    fetch(`/getItem/${searchItem}/ADMIN`)
+      .then(r=>r.json())
+      .then(d=>alert(`Eingabe für Item "${searchItem}": ${searchItem}`));
+  }
+}
+
+function announce(msg){
+  socket.emit("announce",{by:"Admin",text:msg});
+}
+
+function adminAnnounce(){
+  const t = prompt("Text für Ankündigung:");
+  if(t) announce(t);
+}
+
+// --- Socket.io Announcements ---
+socket.on("announcements", msgs=>{
+  const container = document.getElementById("announcementContainer");
+  msgs.forEach(m=>{
+    const div = document.createElement("div");
+    div.className="announcement";
+    div.innerText=m.text;
+    container.appendChild(div);
+    setTimeout(()=>{div.style.opacity=0; setTimeout(()=>div.remove(),1000)},5000);
+    // Neue Nachricht schiebt ältere nach unten
+    Array.from(container.children).forEach((c,i)=>{
+      c.style.top = `${10 + i*30}px`;
+    });
+  });
+});
+</script>
+</body>
+</html>
