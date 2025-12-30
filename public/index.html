@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Random Game</h2>
+
+<input id="input">
+<button onclick="send()">Enter</button>
+<button onclick="adminAnnounce()">Admin Ankündigung</button>
+
+<div id="out"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+
+function send(){
+  const v = input.value;
+  fetch(`/getItem/${v}/PLAYER`)
+    .then(r=>r.json())
+    .then(d=>out.innerHTML += v+" → "+d.value+"<br>");
+}
+
+function adminAnnounce(){
+  const t = prompt("Text:");
+  if(t) socket.emit("announce",{by:"Admin",text:t});
+}
+
+socket.on("announcements", msgs=>{
+  msgs.forEach(m=>{
+    out.innerHTML += "<b>"+m.by+":</b> "+m.text+"<br>";
+  });
+});
+</script>
+</body>
+</html>
