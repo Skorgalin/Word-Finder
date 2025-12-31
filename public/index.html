@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Word Finder</title>
+
+<style>
+body { font-family: Arial; padding: 15px; }
+input, button { font-size: 16px; margin: 3px 0; }
+#adminPanel, #foundItems { display:none; margin-top:10px; border:1px solid #000; padding:10px; }
+
+.announcement {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  padding: 6px 10px;
+  border: 1px solid black;
+}
+
+.ultra {
+  animation: glow 1.5s infinite alternate;
+  border: 3px solid gold;
+}
+
+@keyframes glow {
+  from { box-shadow: 0 0 5px gold; }
+  to { box-shadow: 0 0 20px gold; }
+}
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<!-- LOGIN -->
+<div id="login">
+  <input id="email" placeholder="E-Mail">
+  <button onclick="login()">Anmelden</button>
+</div>
+
+<!-- CODE BOX -->
+<div id="codeBox" style="display:none;">
+  <p>Wir haben dir einen Code geschickt. Bitte hier eintragen:</p>
+  <input id="code" placeholder="6-stelliger Code">
+  <button onclick="verify()">Bestätigen</button>
+</div>
+
+<!-- GAME -->
+<div id="game" style="display:none;">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submit()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="promptAdmin()">Admin</button>
+
+  <div id="foundItems"></div>
+
+  <!-- ADMIN DASHBOARD -->
+  <div id="adminPanel">
+    <h3>Admin Dashboard</h3>
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Senden</button>
+    <h4>Suche</h4>
+    <input id="searchInput" placeholder="Suchbegriff">
+    <button onclick="search()">Suchen</button>
+    <h4>Kategorien</h4>
+    <ul id="categories">
+      <li>Kategorie 1</li>
+      <li>Kategorie 2</li>
+      <li>Kategorie 3</li>
+    </ul>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+const ADMIN_PASSWORD = "DEIN_ADMIN_PASSWORT"; // hier dein Passwort eintragen
+
+function login() {
+  email = document.getElementById("email").value;
+  fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      document.getElementById("login").style.display = "none";
+      document.getElementById("codeBox").style.display = "block";
+    } else {
+      alert("Login fehlgeschlagen");
+    }
+  });
+}
+
+function verify() {
+  const code = document.getElementById("code").value;
+  fetch("/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, code })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      isAdmin = d.admin;
+      document.getElementById("codeBox").style.display = "none";
+      document.getElementById("game").style.display = "block";
+      if (isAdmin) document.getElementById("adminBtn").style.display = "inline";
+    } else alert("Falscher Code");
+  });
+}
+
+function submit() {
+  const w = document.getElementById("word").value;
+  if (!found.includes(w)) found.push(w);
+  renderFound();
+}
+
+function toggleFound() {
+  const f = document.getElementById("foundItems");
+  f.style.display = f.style.display === "none" ? "block" : "none";
+}
+
+function renderFound() {
+  document.getElementById("foundItems").innerHTML =
+    "<b>Found Items:</b><br>" + found.join("<br>");
+}
+
+// Admin-Button: Passwort prüfen
+function promptAdmin() {
+  const pwd = prompt("Bitte Admin-Passwort eingeben:");
+  if (pwd === ADMIN_PASSWORD) {
+    document.getElementById("adminPanel").style.display = "block";
+  } else {
+    alert("Falsches Admin-Passwort");
+  }
+}
+
+// Admin-Funktionen
+function announce() {
+  const t = document.getElementById("announceText").value;
+  const d = document.createElement("div");
+  d.className = "announcement";
+  d.textContent = t;
+  document.getElementById("announcements").prepend(d);
+  setTimeout(() => d.remove(), 5000);
+}
+
+function search() {
+  const term = document.getElementById("searchInput").value.toLowerCase();
+  const results = found.filter(w => w.toLowerCase().includes(term));
+  alert("Gefundene Wörter: " + results.join(", "));
+}
+</script>
+
+</body>
+</html>
