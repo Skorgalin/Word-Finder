@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Word Finder</title>
+<style>
+body { font-family: Arial; padding: 15px; }
+input, button { font-size:16px; margin:3px 0; }
+input:focus { outline:2px solid black; }
+#adminPanel, #foundItems { display:none; margin-top:10px; border:1px solid #000; padding:10px; }
+.announcement { position:relative; background:white; color:black; margin:3px 0; padding:5px; transition: opacity 1s; }
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<div id="loginDiv">
+  <input id="email" placeholder="E-Mail">
+  <input id="password" type="password" placeholder="Passwort">
+  <button id="actionBtn" onclick="action()">Anmelden / Registrieren</button>
+</div>
+
+<div id="game" style="display:none;">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submitItem()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="promptAdmin()">Admin</button>
+
+  <div id="foundItems"></div>
+
+  <div id="adminPanel">
+    <h3>Admin Dashboard</h3>
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Senden</button>
+    <h4>Suche / Edit Items</h4>
+    <input id="searchInput" placeholder="Suchbegriff">
+    <button onclick="searchItem()">Suchen</button>
+    <div id="searchResults"></div>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script>
+let email="", isAdmin=false;
+let found=[];
+const ADMIN_PASSWORD = "X9$QvR7!eM2#A8wK@C";
+
+// Überprüfen, ob E-Mail existiert
+document.getElementById("email").addEventListener("input", async ()=>{
+  const e = document.getElementById("email").value;
+  const r = await fetch("/checkEmail",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:e})});
+  const d = await r.json();
+  document.getElementById("actionBtn").textContent = d.exists?"Login":"Registrieren";
+});
+
+async function action(){
+  email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  if(!email||!password){ alert("E-Mail und Passwort eingeben"); return; }
+  const actionType = document.getElementById("actionBtn").textContent;
+
+  if(actionType==="Registrieren"){
+    const r = await fetch("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
+    const d = await r.json();
+    if(d.ok) alert("Registriert! Jetzt anmelden."); else alert(d.msg);
+  } else {
+    const r = await fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})});
+    const d = await r.json();
+    if(d.ok){
+      isAdmin = d.admin;
+      document.getElementById("loginDiv").style.display="none";
+      document.getElementById("game").style.display="block";
+      if(isAdmin) document.getElementById("adminBtn").style.display="inline";
+    } else alert(d.msg);
+  }
+}
+
+async function submitItem(){
+  const word = document.getElementById("word").value;
+  if(!word) return;
+  const r = await fetch("/submitItem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,input:word,isAdmin})});
+  const d = await r.json();
+  if(d.ok){
+    const output = d.output;
+    const fd = d.firstDiscovery?" (First Discovery)":"";
+    found.push({input:word,output,fd});
+    renderFound();
+  }
+}
+
+function toggleFound(){
+  const f = document.getElementById("foundItems");
+  f.style.display = f.style.display==="none"?"block":"none";
+}
+
+function renderFound(){
+  let html="<b>Found Items:</b><br>";
+  found.forEach(f=>html+=`${f.input} → ${f.output}${f.fd}<br>`);
+  document.getElementById("foundItems").innerHTML = html;
+}
+
+function promptAdmin(){
+  const pwd = prompt("Bitte Admin-Passwort eingeben:");
+  if(pwd===ADMIN_PASSWORD) document.getElementById("adminPanel").style.display="block";
+  else alert("Falsches Admin-Passwort");
+}
+
+async function announce(){
+  const t = document.getElementById("announceText").value;
+  if(!t) return;
+  const r = await fetch("/admin/announce",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});
+  const d = await r.json();
+  if(d.ok) displayAnnouncement(d.msg);
+  document.getElementById("announceText").value="";
+}
+
+function displayAnnouncement(msg){
+  const div = document.createElement("div");
+  div.className="announcement";
+  div.textContent=msg.text;
+  document.getElementById("announcements").appendChild(div);
+  setTimeout(()=>{div.style.opacity="0"; setTimeout(()=>div.remove(),1000)},5000+msg.text.length*50);
+}
+
+async function searchItem(){
+  const term = document.getElementById("searchInput").value.toLowerCase();
+  const r = await fetch("/items");
+  const items = await r.json();
+  let results="";
+  for(const key in items){
+    if(key.toLowerCase().includes(term)||items[key].output.includes(term)) results+=`${key} → ${items[key].output}<br>`;
+  }
+  document.getElementById("searchResults").innerHTML = results;
+}
+</script>
+
+</body>
+</html>
