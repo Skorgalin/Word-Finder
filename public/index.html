@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Word Finder</title>
+<style>
+body { font-family: Arial; font-size:18px; padding:15px; }
+input, button { font-size:18px; width:100%; margin:5px 0; -webkit-tap-highlight-color: transparent; }
+#found, #adminPanel, #notices { margin-top:10px; }
+.notice { background:white; border:1px solid black; padding:6px; margin:5px 0; }
+</style>
+</head>
+<body>
+
+<h2>Word Finder</h2>
+
+<div id="loginBox">
+  <input id="email" placeholder="E-Mail">
+  <input id="password" type="password" placeholder="Passwort">
+  <button id="registerBtn" onclick="register()">Registrieren</button>
+  <button id="loginBtn" onclick="login()">Login</button>
+</div>
+
+<div id="game" style="display:none;">
+  <input id="word" placeholder="Etwas eingeben">
+  <button onclick="submitWord()">OK</button>
+  <button id="adminBtn" style="display:none;" onclick="showAdmin()">Admin</button>
+
+  <div id="notices"></div>
+  <div id="found"></div>
+</div>
+
+<div id="adminPanel" style="display:none;">
+  <h3>Admin Dashboard</h3>
+  <input id="adminPass" type="password" placeholder="Admin Passwort">
+  <button onclick="loginAdmin()">OK</button>
+  <div id="adminControls" style="display:none;">
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Senden</button>
+    <h4>Admin Suche</h4>
+    <input id="searchOutput" placeholder="Output suchen">
+    <input id="searchNewInput" placeholder="Neuer Input">
+    <button onclick="switchInput()">Switch</button>
+  </div>
+</div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+const ADMIN_PASSWORD = "X9$QvR7!eM2#A8wK@C";
+
+// --- Login / Register ---
+function register() {
+  email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  fetch("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok) { alert("Registriert"); enterGame(); } else alert(d.msg);
+  });
+}
+
+function login() {
+  email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){ isAdmin=d.admin; enterGame(); if(isAdmin) document.getElementById("adminBtn").style.display="inline"; }
+    else alert(d.msg);
+  });
+}
+
+function enterGame(){
+  document.getElementById("loginBox").style.display="none";
+  document.getElementById("game").style.display="block";
+}
+
+// --- Game ---
+const wordInput = document.getElementById("word");
+const noticesDiv = document.getElementById("notices");
+const foundDiv = document.getElementById("found");
+
+function submitWord(){
+  const w = wordInput.value.trim();
+  if(!w) return;
+  fetch("/submit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input:w,email})})
+  .then(r=>r.json()).then(d=>{
+    const text = d.input + " → " + d.output + (d.firstDiscovery?" (First Discovery)":"");
+    const n = document.createElement("div"); n.className="notice"; n.textContent=text; noticesDiv.prepend(n);
+    setTimeout(()=>n.remove(),4000);
+    if(!found.includes(text)) found.push(text);
+    foundDiv.innerHTML="<b>Found Items:</b><br>"+found.join("<br>");
+    wordInput.value="";
+  });
+}
+
+// --- Admin ---
+function showAdmin(){ document.getElementById("adminPanel").style.display="block"; }
+
+function loginAdmin(){
+  const pass = document.getElementById("adminPass").value;
+  if(pass===ADMIN_PASSWORD){ document.getElementById("adminControls").style.display="block"; alert("Admin OK"); }
+  else alert("Falsches Admin Passwort");
+}
+
+function announce(){
+  const text=document.getElementById("announceText").value;
+  fetch("/admin/announce",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,email})})
+  .then(r=>r.json()).then(d=>{ if(d.ok){ document.getElementById("announceText").value=""; alert("Gesendet"); }});
+}
+
+function switchInput(){
+  const oldInput = document.getElementById("searchOutput").value.trim();
+  const newInput = document.getElementById("searchNewInput").value.trim();
+  fetch("/admin/switch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({oldInput,newInput,email})})
+  .then(r=>r.json()).then(d=>{ if(d.ok) alert("Gewechselt"); else alert("Fehler"); });
+}
+</script>
+
+</body>
+</html>
