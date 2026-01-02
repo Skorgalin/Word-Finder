@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Word Finder</title>
+
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  background: #111;
+  color: white;
+  font-family: Arial, sans-serif;
+}
+
+input, button {
+  width: 100%;
+  padding: 12px;
+  margin: 6px 0;
+  font-size: 18px;
+}
+
+button { background: #2a7cff; color: white; border: none; }
+button.green { background: #00aa66; }
+button.red { background: #aa3333; }
+
+#toastContainer {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+}
+
+.toast {
+  background: white;
+  color: black;
+  padding: 8px 12px;
+  margin-top: 6px;
+  border-radius: 6px;
+}
+
+#foundItems {
+  max-height: 40vh;
+  overflow-y: auto;
+  border: 1px solid #555;
+  padding: 8px;
+  margin-top: 10px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="login">
+  <input id="email" placeholder="E-Mail" oninput="checkEmail()">
+  <input id="password" type="password" placeholder="Passwort">
+
+  <button id="registerBtn" class="green" onclick="register()" style="display:none">
+    Registrieren
+  </button>
+  <button id="loginBtn" onclick="login()" style="display:none">
+    Login
+  </button>
+</div>
+
+<div id="game" style="display:none;">
+  <button class="red" onclick="logout()">Logout</button>
+
+  <input id="word" placeholder="Etwas eingeben">
+  <button onclick="find()">OK</button>
+
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" onclick="adminLogin()" style="display:none">Admin</button>
+
+  <div id="foundItems" style="display:none"></div>
+</div>
+
+<div id="toastContainer"></div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+
+function toast(text, time = 4000) {
+  const d = document.createElement("div");
+  d.className = "toast";
+  d.textContent = text;
+  toastContainer.appendChild(d);
+  setTimeout(() => d.remove(), time);
+}
+
+// 🔍 E-Mail prüfen
+function checkEmail() {
+  const e = emailInput.value;
+  if (!e.includes("@")) return;
+
+  fetch("/check-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: e })
+  })
+  .then(r => r.json())
+  .then(d => {
+    registerBtn.style.display = d.exists ? "none" : "block";
+    loginBtn.style.display = d.exists ? "block" : "none";
+  });
+}
+
+function register() {
+  fetch("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: emailInput.value,
+      password: password.value
+    })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) login();
+    else alert("E-Mail existiert schon");
+  });
+}
+
+function login() {
+  fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: emailInput.value,
+      password: password.value
+    })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) return alert("Falsches Passwort");
+    email = emailInput.value;
+    isAdmin = d.admin;
+    loginDiv.style.display = "none";
+    game.style.display = "block";
+    if (isAdmin) adminBtn.style.display = "block";
+  });
+}
+
+function logout() {
+  location.reload();
+}
+
+function find() {
+  fetch("/find", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input: word.value, email })
+  }).then(r => r.json()).then(d => {
+    toast(`${d.input} → ${d.output}${d.first ? " ⭐" : ""}`);
+    found.push(d);
+    word.value = "";
+    renderFound();
+  });
+}
+
+function toggleFound() {
+  foundItems.style.display =
+    foundItems.style.display === "none" ? "block" : "none";
+}
+
+function renderFound() {
+  if (!found.length) {
+    foundItems.innerHTML = "Noch nichts gefunden";
+    return;
+  }
+  foundItems.innerHTML = found
+    .map(f => `${f.input} → ${f.output}${f.first ? " ⭐" : ""}`)
+    .join("<br>");
+}
+
+function adminLogin() {
+  const pw = prompt("Admin Passwort:");
+  fetch("/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: pw })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) return alert("Falsches Admin Passwort");
+    const text = prompt("Admin Ankündigung:");
+    if (text) {
+      fetch("/admin/announce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
+      });
+      toast(text, 5000);
+    }
+  });
+}
+
+// DOM
+const emailInput = document.getElementById("email");
+const password = document.getElementById("password");
+const loginDiv = document.getElementById("login");
+const game = document.getElementById("game");
+const adminBtn = document.getElementById("adminBtn");
+const foundItems = document.getElementById("foundItems");
+const word = document.getElementById("word");
+const registerBtn = document.getElementById("registerBtn");
+const loginBtn = document.getElementById("loginBtn");
+const toastContainer = document.getElementById("toastContainer");
+</script>
+
+</body>
+</html>
