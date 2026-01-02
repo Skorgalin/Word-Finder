@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Word Finder Game</title>
+<style>
+html, body { margin:0; padding:0; height:100%; width:100%; font-family: Arial; background:#111; color:#eee; }
+body { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }
+input, button { font-size:18px; padding:8px; margin:4px; border-radius:4px; border:none; }
+button { cursor:pointer; }
+#game, #adminPanel { display:none; width:90%; max-width:600px; margin-top:20px; }
+#foundItems { display:none; max-height:200px; overflow-y:auto; background:#222; padding:10px; margin-top:10px; border-radius:5px; }
+.announcement { position:fixed; top:10px; left:50%; transform:translateX(-50%); background:#fff; color:#000; padding:6px 12px; border-radius:4px; box-shadow:0 0 10px #000; }
+#adminPanel { background:#000; color:#0f0; padding:10px; border:2px solid #0f0; border-radius:5px; }
+#adminPanel input, #adminPanel button { background:#111; color:#0f0; border:1px solid #0f0; }
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<!-- LOGIN / REGISTER -->
+<div id="login">
+  <input id="email" placeholder="E-Mail">
+  <input id="password" placeholder="Passwort" type="password">
+  <button id="checkBtn" onclick="checkEmail()">Überprüfen</button>
+  <button id="registerBtn" style="display:none;" onclick="register()">Registrieren</button>
+  <button id="loginBtn" style="display:none;" onclick="login()">Login</button>
+  <div id="loginMsg" style="color:red; margin-top:5px;"></div>
+</div>
+
+<!-- GAME -->
+<div id="game">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submitItem()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="toggleAdmin()">Admin</button>
+  <button onclick="logout()">Logout</button>
+
+  <div id="shortFound"></div>
+  <div id="foundItems"></div>
+
+  <!-- ADMIN PANEL -->
+  <div id="adminPanel">
+    <h3>Admin Dashboard</h3>
+    <div>
+      <input id="adminPassword" placeholder="Admin Passwort" type="password">
+      <button onclick="verifyAdminPassword()">Admin Login</button>
+    </div>
+
+    <div id="adminControls" style="display:none;">
+      <h4>Suche</h4>
+      <input id="adminSearchInput" placeholder="Output eingeben">
+      <button onclick="adminSearch()">OK</button>
+      <div id="adminSearchResult"></div>
+
+      <h4>Ankündigung</h4>
+      <input id="announceText" placeholder="Text eingeben">
+      <button onclick="announce()">Senden</button>
+    </div>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+let adminVerified = false;
+
+// --- LOGIN / REGISTER ---
+async function checkEmail() {
+  email = document.getElementById("email").value;
+  const resp = await fetch("/check-email", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ email })
+  });
+  const data = await resp.json();
+  document.getElementById("registerBtn").style.display = data.exists ? "none" : "inline";
+  document.getElementById("loginBtn").style.display = data.exists ? "inline" : "none";
+  document.getElementById("loginMsg").textContent = "";
+}
+
+async function register() {
+  const password = document.getElementById("password").value;
+  const resp = await fetch("/register", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ email, password })
+  });
+  const data = await resp.json();
+  if(data.ok) {
+    isAdmin = data.admin;
+    enterGame();
+  } else {
+    document.getElementById("loginMsg").textContent = data.msg;
+  }
+}
+
+async function login() {
+  const password = document.getElementById("password").value;
+  const resp = await fetch("/login", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ email, password })
+  });
+  const data = await resp.json();
+  if(data.ok) {
+    isAdmin = data.admin;
+    enterGame();
+  } else {
+    document.getElementById("loginMsg").textContent = data.msg;
+  }
+}
+
+function logout() {
+  email = ""; isAdmin = false; adminVerified = false; found = [];
+  document.getElementById("login").style.display = "block";
+  document.getElementById("game").style.display = "none";
+  document.getElementById("password").value = "";
+  document.getElementById("email").value = "";
+}
+
+// --- ENTER GAME ---
+function enterGame() {
+  document.getElementById("login").style.display = "none";
+  document.getElementById("game").style.display = "block";
+  document.getElementById("word").value = "";
+  document.getElementById("shortFound").innerHTML = "";
+  document.getElementById("foundItems").innerHTML = "";
+  if(isAdmin) document.getElementById("adminBtn").style.display = "inline";
+  fetchData();
+}
+
+// --- ITEMS ---
+async function submitItem() {
+  const input = document.getElementById("word").value;
+  if(!input) return;
+  document.getElementById("word").value = ""; // Feld leeren
+  const resp = await fetch("/submit-item", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ input, email })
+  });
+  const data = await resp.json();
+  if(data.ok){
+    const text = `${input} -> ${data.output}` + (data.firstDiscovery ? " (First Discovery!)" : "");
+    document.getElementById("shortFound").textContent = text;
+    setTimeout(()=>document.getElementById("shortFound").textContent = "", 5000);
+    found.push(text);
+    renderFound();
+  }
+}
+
+function renderFound() {
+  const f = document.getElementById("foundItems");
+  f.innerHTML = found.join("<br>");
+}
+
+function toggleFound() {
+  const f = document.getElementById("foundItems");
+  f.style.display = f.style.display === "none" ? "block" : "none";
+}
+
+// --- ADMIN ---
+function toggleAdmin() {
+  const a = document.getElementById("adminPanel");
+  a.style.display = a.style.display === "none" ? "block" : "none";
+}
+
+function verifyAdminPassword() {
+  const pw = document.getElementById("adminPassword").value;
+  if(pw === "X9$QvR7!eM2#A8wK@C") {
+    adminVerified = true;
+    document.getElementById("adminControls").style.display = "block";
+  } else alert("Falsches Admin Passwort");
+}
+
+async function adminSearch() {
+  const output = document.getElementById("adminSearchInput").value;
+  if(!output) return;
+  const resp = await fetch("/admin-search", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ output })
+  });
+  const data = await resp.json();
+  if(data.ok){
+    document.getElementById("adminSearchResult").innerHTML = `Input -> Output: ${data.input} -> ${data.output}`;
+  }
+}
+
+async function announce() {
+  const text = document.getElementById("announceText").value;
+  if(!text) return;
+  document.getElementById("announceText").value = "";
+  const resp = await fetch("/admin-announcement", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ text })
+  });
+  const data = await resp.json();
+  if(data.ok){
+    const d = document.createElement("div");
+    d.className = "announcement";
+    d.textContent = text;
+    document.getElementById("announcements").prepend(d);
+    setTimeout(()=>d.remove(), 5000);
+  }
+}
+
+// --- FETCH FOUND ITEMS + ANKÜNDIGUNGEN ---
+async function fetchData(){
+  const resp = await fetch("/data");
+  const data = await resp.json();
+  // Found Items
+  found = [];
+  for(const i in data.items){
+    const fd = data.items[i];
+    let text = `${i} -> ${fd.output}` + (fd.firstDiscovery && email !== "till.behner@icloud.com" ? " (First Discovery!)" : "");
+    found.push(text);
+  }
+  renderFound();
+
+  // Admin Ankündigungen
+  for(const id in data.announcements){
+    const a = data.announcements[id];
+    const d = document.createElement("div");
+    d.className = "announcement";
+    d.textContent = a.text;
+    document.getElementById("announcements").prepend(d);
+    setTimeout(()=>d.remove(), 5000);
+  }
+}
+</script>
+</body>
+</html>
