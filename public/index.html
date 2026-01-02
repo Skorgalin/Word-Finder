@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Word Finder</title>
+
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  background: #111;
+  color: white;
+  font-family: Arial, sans-serif;
+}
+
+button, input {
+  font-size: 18px;
+  padding: 10px;
+  margin: 5px 0;
+  width: 100%;
+}
+
+#login, #game {
+  padding: 15px;
+}
+
+#toastContainer {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999;
+}
+
+.toast {
+  background: white;
+  color: black;
+  padding: 8px 12px;
+  margin-top: 6px;
+  border-radius: 6px;
+}
+
+#foundItems {
+  max-height: 40vh;
+  overflow-y: auto;
+  border: 1px solid #555;
+  padding: 8px;
+  margin-top: 10px;
+}
+
+#adminPanel {
+  background: black;
+  color: #00ff88;
+  border: 1px solid #00ff88;
+  padding: 10px;
+  margin-top: 10px;
+  display: none;
+  font-family: monospace;
+}
+</style>
+</head>
+
+<body>
+
+<div id="login">
+  <input id="email" placeholder="E-Mail">
+  <input id="password" type="password" placeholder="Passwort">
+  <button onclick="register()">Registrieren</button>
+  <button onclick="login()">Login</button>
+</div>
+
+<div id="game" style="display:none;">
+  <button onclick="logout()">Logout</button>
+
+  <input id="word" placeholder="Etwas eingeben">
+  <button onclick="find()">OK</button>
+
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" onclick="adminLogin()" style="display:none;">Admin</button>
+
+  <div id="foundItems" style="display:none;"></div>
+
+  <div id="adminPanel">
+    <input id="adminSearch" placeholder="Output suchen">
+    <button onclick="adminSearch()">OK</button>
+    <div id="adminResult"></div>
+
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Senden</button>
+  </div>
+</div>
+
+<div id="toastContainer"></div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+
+function toast(text, time = 4000) {
+  const d = document.createElement("div");
+  d.className = "toast";
+  d.textContent = text;
+  document.getElementById("toastContainer").appendChild(d);
+  setTimeout(() => d.remove(), time);
+}
+
+function register() {
+  fetch("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: emailInput.value,
+      password: password.value
+    })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) login();
+  });
+}
+
+function login() {
+  fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: emailInput.value,
+      password: password.value
+    })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) return alert("Falsches Passwort");
+    email = emailInput.value;
+    isAdmin = d.admin;
+    loginDiv.style.display = "none";
+    game.style.display = "block";
+    if (isAdmin) adminBtn.style.display = "block";
+  });
+}
+
+function logout() {
+  location.reload();
+}
+
+function find() {
+  fetch("/find", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input: word.value, email })
+  }).then(r => r.json()).then(d => {
+    toast(`${d.input} → ${d.output}` + (d.first ? " (First Discovery)" : ""));
+    found.push(d);
+    word.value = "";
+    renderFound();
+  });
+}
+
+function toggleFound() {
+  foundItems.style.display =
+    foundItems.style.display === "none" ? "block" : "none";
+}
+
+function renderFound() {
+  if (!found.length) {
+    foundItems.innerHTML = "Noch nichts gefunden";
+    return;
+  }
+  foundItems.innerHTML = found
+    .map(f => `${f.input} → ${f.output}${f.first ? " ⭐" : ""}`)
+    .join("<br>");
+}
+
+function adminLogin() {
+  const pw = prompt("Admin Passwort:");
+  fetch("/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: pw })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) adminPanel.style.display = "block";
+    else alert("Falsches Admin Passwort");
+  });
+}
+
+function adminSearch() {
+  fetch("/admin/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ output: adminSearch.value })
+  }).then(r => r.json()).then(d => {
+    adminResult.textContent = d.input + " → " + d.output;
+  });
+}
+
+function announce() {
+  toast(announceText.value, 5000);
+  announceText.value = "";
+}
+
+const emailInput = document.getElementById("email");
+const password = document.getElementById("password");
+const loginDiv = document.getElementById("login");
+const game = document.getElementById("game");
+const adminBtn = document.getElementById("adminBtn");
+const foundItems = document.getElementById("foundItems");
+const word = document.getElementById("word");
+const adminPanel = document.getElementById("adminPanel");
+const adminSearch = document.getElementById("adminSearch");
+const adminResult = document.getElementById("adminResult");
+const announceText = document.getElementById("announceText");
+</script>
+
+</body>
+</html>
