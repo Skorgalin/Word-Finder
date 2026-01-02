@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word Finder Game</title>
+<style>
+body { font-family: Arial; padding: 15px; user-select:none; }
+input, button { font-size: 18px; margin:3px; }
+#game, #adminPanel, #foundItems { display:none; margin-top:10px; border:1px solid #000; padding:10px; max-height:300px; overflow:auto; }
+.announcement { position: relative; background:white; padding:5px; border:1px solid black; margin-bottom:5px; }
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<div id="loginMenu">
+  <input id="email" placeholder="E-Mail">
+  <input id="password" placeholder="Passwort" type="password">
+  <button id="registerBtn" style="display:none;" onclick="register()">Registrieren</button>
+  <button id="loginBtn" style="display:none;" onclick="login()">Login</button>
+</div>
+
+<div id="game">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submit()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="toggleAdmin()">Admin</button>
+  <button onclick="logout()">Logout</button>
+
+  <div id="foundItems"></div>
+  <div id="announcements"></div>
+
+  <div id="adminPanel">
+    <h3>Admin Dashboard</h3>
+    <input id="adminSearchInput" placeholder="Output suchen">
+    <button onclick="adminSearch()">OK</button>
+    <div id="adminSearchResult"></div>
+
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Ankündigen</button>
+  </div>
+</div>
+
+<script>
+let email = "";
+let isAdmin = false;
+let found = [];
+let items = {};
+let announcements = [];
+
+// --- Prüfen ob Email existiert ---
+document.getElementById("email").addEventListener("input", ()=>{
+  fetch("/checkEmail",{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email:document.getElementById("email").value})})
+  .then(r=>r.json()).then(d=>{
+    document.getElementById("registerBtn").style.display = d.exists ? "none":"inline";
+    document.getElementById("loginBtn").style.display = d.exists ? "inline":"none";
+  });
+});
+
+// --- Register/Login ---
+function register(){
+  const e=document.getElementById("email").value;
+  const p=document.getElementById("password").value;
+  fetch("/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:e,password:p})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok) { alert("Registriert!"); login(); }
+    else alert(d.error);
+  });
+}
+
+function login(){
+  const e=document.getElementById("email").value;
+  const p=document.getElementById("password").value;
+  fetch("/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:e,password:p})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){
+      email=e; isAdmin=d.admin;
+      document.getElementById("loginMenu").style.display="none";
+      document.getElementById("game").style.display="block";
+      if(isAdmin) document.getElementById("adminBtn").style.display="inline";
+      document.getElementById("email").value="";
+      document.getElementById("password").value="";
+      loadItems(); loadAnnouncements();
+    } else alert("Falsches Passwort");
+  });
+}
+
+function logout(){
+  email=""; isAdmin=false;
+  document.getElementById("loginMenu").style.display="block";
+  document.getElementById("game").style.display="none";
+  document.getElementById("adminBtn").style.display="none";
+}
+
+// --- Found Items ---
+function toggleFound(){
+  const f=document.getElementById("foundItems");
+  f.style.display = f.style.display==="none" ? "block":"none";
+}
+
+function renderFound(){
+  const f=document.getElementById("foundItems");
+  f.innerHTML="";
+  for(const k in items){
+    const div=document.createElement("div");
+    div.textContent = items[k].input + " → " + k + (items[k].firstBy ? " (First Discovery)":"");
+    f.appendChild(div);
+  }
+}
+
+// --- Submit Item ---
+function submit(){
+  const w=document.getElementById("word").value;
+  document.getElementById("word").value="";
+  fetch("/submitItem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,w})})
+  .then(r=>r.json()).then(d=>{
+    items[d.key]={input:d.input, firstBy:d.first ? email : null};
+    renderFound();
+  });
+}
+
+// --- Load Items + Announcements ---
+function loadItems(){
+  fetch("/getItems").then(r=>r.json()).then(d=>{ items=d; renderFound(); });
+}
+
+function loadAnnouncements(){
+  fetch("/getAnnouncements").then(r=>r.json()).then(d=>{
+    announcements=d;
+    showAnnouncements();
+  });
+}
+
+function showAnnouncements(){
+  const box=document.getElementById("announcements");
+  box.innerHTML="";
+  announcements.forEach(a=>{
+    const div=document.createElement("div");
+    div.className="announcement"; div.textContent=a.text;
+    box.appendChild(div);
+    setTimeout(()=>div.remove(),5000);
+  });
+}
+
+// --- Admin Panel ---
+function toggleAdmin(){
+  const a=document.getElementById("adminPanel");
+  a.style.display = a.style.display==="none" ? "block":"none";
+}
+
+function adminSearch(){
+  const val=document.getElementById("adminSearchInput").value;
+  fetch("/adminSearch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({search:val})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){
+      const rDiv=document.getElementById("adminSearchResult");
+      rDiv.innerHTML=d.input + " → " + d.output;
+      rDiv.onclick=()=>{
+        const newInput = prompt("Neuer Input", d.input);
+        if(newInput) {
+          fetch("/adminChangeInput",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({output:d.output,newInput})})
+          .then(r=>r.json()).then(dd=>{
+            if(dd.ok){ loadItems(); alert("Input geändert"); }
+          });
+        }
+      }
+    }
+  });
+}
+
+function announce(){
+  const t=document.getElementById("announceText").value;
+  document.getElementById("announceText").value="";
+  fetch("/adminAnnounce",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})})
+  .then(r=>r.json()).then(d=>{ if(d.ok) loadAnnouncements(); });
+}
+
+</script>
+</body>
+</html>
