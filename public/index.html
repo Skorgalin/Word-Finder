@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Word Finder</title>
+<style>
+body { font-family: Arial; font-size:18px; padding:15px; -webkit-user-select:none; }
+input, button { font-size:18px; padding:6px; margin:4px 0; }
+.box { border:1px solid black; padding:10px; margin-top:10px; }
+.result { background:white; border:1px solid black; padding:6px; margin-top:5px; cursor:pointer; }
+.announcement { background:white; border:1px solid black; padding:6px; margin-top:5px; }
+#found { max-height:200px; overflow-y:auto; border:1px solid #000; padding:5px; margin-top:5px; }
+</style>
+</head>
+<body>
+
+<h2>Word Finder Game</h2>
+
+<div id="auth" class="box">
+  <input id="email" placeholder="E-Mail"><br>
+  <input id="password" placeholder="Passwort" type="password"><br>
+  <button id="registerBtn" onclick="register()">Registrieren</button>
+  <button id="loginBtn" onclick="login()">Login</button>
+</div>
+
+<div id="game" class="box" style="display:none;">
+  <input id="word" placeholder="Etwas eingeben">
+  <button onclick="submitWord()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="logoutBtn" onclick="logout()">Logout</button>
+  <button id="adminBtn" style="display:none;" onclick="showAdmin()">Admin</button>
+
+  <div id="result"></div>
+  <div id="found" style="display:none;"></div>
+</div>
+
+<div id="adminPanel" class="box" style="display:none;">
+  <input id="adminPass" placeholder="Admin Passwort" type="password">
+  <button onclick="adminLogin()">Admin Login</button>
+
+  <div id="adminTools" style="display:none;">
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="announce()">Senden</button>
+    <br><br>
+    <input id="searchItem" placeholder="Item suchen">
+    <button onclick="adminSearch()">OK</button>
+    <div id="adminSearchResult"></div>
+    <input id="newInput" placeholder="Neuer Input">
+    <button onclick="adminUpdate()">Update Item</button>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script>
+let email = "";
+let isAdmin = false;
+
+/* ===== CHECK EMAIL ===== */
+document.getElementById("email").oninput = async () => {
+  const e = document.getElementById("email").value;
+  const r = await fetch("/check-email", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({email:e})
+  });
+  const d = await r.json();
+  document.getElementById("loginBtn").style.display = d.exists ? "inline" : "none";
+  document.getElementById("registerBtn").style.display = d.exists ? "none" : "inline";
+};
+
+/* ===== AUTH ===== */
+async function register(){
+  email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const r = await fetch("/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({email,password})
+  });
+  const d = await r.json();
+  if(d.ok) startGame(d.admin);
+  else alert(d.error || "Fehler beim Registrieren");
+}
+
+async function login(){
+  email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const r = await fetch("/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({email,password})
+  });
+  const d = await r.json();
+  if(d.ok) startGame(d.admin);
+  else alert("Falsches Passwort");
+}
+
+function startGame(admin){
+  isAdmin = admin;
+  document.getElementById("auth").style.display="none";
+  document.getElementById("game").style.display="block";
+  if(isAdmin) document.getElementById("adminBtn").style.display="inline";
+  loadFound();
+}
+
+/* ===== LOGOUT ===== */
+async function logout(){
+  await fetch("/logout",{method:"POST"});
+  document.getElementById("auth").style.display="block";
+  document.getElementById("game").style.display="none";
+  document.getElementById("adminPanel").style.display="none";
+  document.getElementById("adminTools").style.display="none";
+  document.getElementById("result").innerHTML="";
+  document.getElementById("found").innerHTML="";
+}
+
+/* ===== GAME ===== */
+async function submitWord(){
+  const input = document.getElementById("word").value;
+  if(!input) return;
+
+  const r = await fetch("/submit",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({input,email})
+  });
+  const d = await r.json();
+
+  const div = document.createElement("div");
+  div.className="result";
+  div.textContent = input + " → " + d.output + (d.first?" (First Discovery)":"");
+  document.getElementById("result").prepend(div);
+
+  document.getElementById("word").value="";
+
+  setTimeout(()=>div.remove(),5000);
+  loadFound();
+}
+
+async function loadFound(){
+  const r = await fetch("/found/"+email);
+  const d = await r.json();
+  const box=document.getElementById("found");
+  box.innerHTML="<b>Found Items</b><br>" + d.map(x=>x.input+" → "+x.output+(x.first?" (First Discovery)":"")).join("<br>");
+}
+
+function toggleFound(){
+  const box=document.getElementById("found");
+  box.style.display = box.style.display==="block"?"none":"block";
+}
+
+/* ===== ADMIN ===== */
+function showAdmin(){document.getElementById("adminPanel").style.display="block";}
+
+async function adminLogin(){
+  const password = document.getElementById("adminPass").value;
+  const r = await fetch("/admin-login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({password})
+  });
+  const d = await r.json();
+  if(d.ok) document.getElementById("adminTools").style.display="block";
+  else alert("Admin Passwort falsch");
+}
+
+async function adminSearch(){
+  const input=document.getElementById("searchItem").value;
+  if(!input) return;
+  const r = await fetch("/admin/search",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({input})
+  });
+  const d = await r.json();
+  const resDiv=document.getElementById("adminSearchResult");
+  resDiv.innerHTML="";
+  const div=document.createElement("div");
+  div.className="result";
+  div.textContent=d.input + " → " + d.output;
+  div.onclick=()=>{
+    const newInput=prompt("Neuer Input",d.input);
+    if(!newInput) return;
+    fetch("/admin/update",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({input:d.input,newInput})
+    }).then(()=>adminSearch());
+  };
+  resDiv.appendChild(div);
+}
+
+async function adminUpdate(){
+  const input=document.getElementById("searchItem").value;
+  const newInput=document.getElementById("newInput").value;
+  if(!input || !newInput) return;
+  await fetch("/admin/update",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({input,newInput})
+  });
+  document.getElementById("searchItem").value="";
+  document.getElementById("newInput").value="";
+  loadFound();
+}
+
+/* ===== ANNOUNCEMENTS ===== */
+async function announce(){
+  const t=document.getElementById("announceText").value;
+  if(!t) return;
+  await fetch("/admin/announce",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({text:t})
+  });
+  document.getElementById("announceText").value="";
+}
+
+setInterval(async ()=>{
+  if(document.getElementById("game").style.display!=="block") return;
+  const r=await fetch("/announcements");
+  const d=await r.json();
+  const box=document.getElementById("announcements");
+  box.innerHTML="";
+  d.forEach(a=>{
+    const div=document.createElement("div");
+    div.className="announcement";
+    div.textContent=a.text;
+    box.appendChild(div);
+    setTimeout(()=>div.remove(),5000);
+  });
+},3000);
+</script>
+</body>
+</html>
