@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word Finder Game</title>
+
+<style>
+body{
+  font-family:Arial;
+  margin:0;
+  padding:0;
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  background:#0f0f0f;
+  color:#fff;
+}
+header{
+  text-align:center;
+  padding:10px;
+  background:#111;
+}
+#login,#game{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+}
+input,button{
+  font-size:18px;
+  margin:5px;
+}
+#foundItems,#adminPanel{
+  border:1px solid #444;
+  padding:10px;
+  margin-top:10px;
+  width:90%;
+  max-height:200px;
+  overflow-y:auto;
+  background:#222;
+  display:none;
+}
+.announcement{
+  position:fixed;
+  top:10px;
+  left:50%;
+  transform:translateX(-50%);
+  background:white;
+  color:black;
+  padding:6px 10px;
+  border:1px solid black;
+}
+</style>
+</head>
+
+<body>
+
+<header><h2>Word Finder Game</h2></header>
+
+<!-- LOGIN -->
+<div id="login">
+  <input id="email" type="email" placeholder="E-Mail" autocomplete="username" required>
+  <input id="password" type="password" placeholder="Passwort" autocomplete="current-password" required>
+
+  <button id="registerBtn">Registrieren</button>
+  <button id="loginBtn" style="display:none;">Login</button>
+</div>
+
+<!-- GAME -->
+<div id="game" style="display:none;">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submitItem()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="askAdminPassword()">Admin</button>
+
+  <div id="foundItems"></div>
+
+  <div id="adminPanel">
+    <h3>Admin Dashboard</h3>
+
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="sendAnnouncement()">Senden</button>
+
+    <hr>
+
+    <input id="adminSearchInput" placeholder="Output eingeben">
+    <button onclick="adminSearch()">OK</button>
+    <div id="adminSearchResult"></div>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+/* ================= VARIABLEN ================= */
+const emailInput = document.getElementById("email");
+const passwordInput = document.getElementById("password");
+const loginBtn = document.getElementById("loginBtn");
+const registerBtn = document.getElementById("registerBtn");
+
+let email = "";
+let isAdmin = false;
+let adminUnlocked = false;
+
+const socket = io();
+
+/* ========== EMAIL CHECK (Login/Register Umschalten) ========== */
+emailInput.addEventListener("input",()=>{
+  fetch("/checkEmail",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email: emailInput.value })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    loginBtn.style.display = d.exists ? "inline" : "none";
+    registerBtn.style.display = d.exists ? "none" : "inline";
+  });
+});
+
+/* ================= REGISTER ================= */
+registerBtn.onclick = ()=>{
+  fetch("/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      email: emailInput.value,
+      password: passwordInput.value
+    })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      enterGame(d.admin);
+    } else {
+      alert("Registrierung fehlgeschlagen");
+    }
+  });
+};
+
+/* ================= LOGIN ================= */
+loginBtn.onclick = ()=>{
+  fetch("/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      email: emailInput.value,
+      password: passwordInput.value
+    })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      enterGame(d.admin);
+    } else {
+      alert("Falsches Passwort");
+    }
+  });
+};
+
+/* ================= ENTER GAME ================= */
+function enterGame(admin){
+  email = emailInput.value;
+  isAdmin = admin;
+  adminUnlocked = false;
+
+  document.getElementById("login").style.display="none";
+  document.getElementById("game").style.display="flex";
+
+  if(isAdmin){
+    document.getElementById("adminBtn").style.display="inline";
+  }
+
+  emailInput.value="";
+  passwordInput.value="";
+}
+
+/* ================= ITEMS ================= */
+function submitItem(){
+  const input=document.getElementById("word").value;
+  if(!input) return;
+
+  fetch("/submitItem",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email, input })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      const div=document.createElement("div");
+      div.textContent = d.input+" → "+d.output+(d.firstDiscovery?" (First Discovery)":"");
+      document.getElementById("foundItems").prepend(div);
+      document.getElementById("word").value="";
+    }
+  });
+}
+
+function toggleFound(){
+  const f=document.getElementById("foundItems");
+  f.style.display = f.style.display==="none"?"block":"none";
+}
+
+/* ================= ADMIN ================= */
+function askAdminPassword(){
+  const pw=prompt("Admin Passwort:");
+  if(pw==="X9$QvR7!eM2#A8wK@C"){
+    adminUnlocked=true;
+    document.getElementById("adminPanel").style.display="block";
+  } else {
+    alert("Falsches Passwort");
+  }
+}
+
+/* ================= LIVE ANNOUNCEMENTS ================= */
+socket.on("announcement",data=>{
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent=data.text;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+});
+
+function sendAnnouncement(){
+  if(!adminUnlocked) return;
+  const text=document.getElementById("announceText").value;
+  socket.emit("adminAnnouncement",{text,password:"X9$QvR7!eM2#A8wK@C"});
+  document.getElementById("announceText").value="";
+}
+
+/* ================= ADMIN SEARCH ================= */
+function adminSearch(){
+  const query=document.getElementById("adminSearchInput").value;
+
+  fetch("/adminSearch",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ query })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      const res=document.getElementById("adminSearchResult");
+      res.textContent = d.input+" → "+d.output;
+      res.onclick=()=>{
+        const ni=prompt("Neuer Input:",d.input);
+        if(!ni) return;
+        fetch("/adminChangeInput",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({oldInput:d.input,newInput:ni})
+        }).then(()=>res.textContent=ni+" → "+d.output);
+      };
+    }
+  });
+}
+</script>
+
+</body>
+</html>
