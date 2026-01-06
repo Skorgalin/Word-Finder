@@ -300,6 +300,37 @@ function adminSearch(){
     }
   });
 }
+ <hr>
+<h4>Spielerverwaltung</h4>
+
+<!-- Online Spieler Zähler -->
+<div id="onlineCounter" style="margin-bottom:10px; font-weight:bold; color:#0f0;">Online Spieler: 0</div>
+
+<!-- Spieler suchen -->
+<input id="playerSearchInput" placeholder="Spielername suchen">
+<button id="playerSearchBtn" style="background:#ff6600; color:#fff;">Suchen</button>
+
+<!-- Spieler Ergebnis -->
+<div id="playerSearchResult" style="margin-top:10px; border:1px solid #444; padding:10px; max-height:150px; overflow-y:auto; background:#111;"></div>
+
+<!-- Spieleraktionen -->
+<div id="playerActions" style="display:none; margin-top:10px; border:1px solid #555; padding:10px; background:#222;">
+  <h5 id="playerNameDisplay"></h5>
+
+  <!-- Spectate -->
+  <button id="spectateBtn" style="background:#00ccff; color:#000;">Spectate</button>
+
+  <!-- Bann -->
+  <div style="margin-top:10px;">
+    <input id="banReason" placeholder="Grund für Bann">
+    <input id="banDuration" type="number" placeholder="Dauer in Minuten" style="width:120px;">
+    <button id="banBtn" style="background:#ff0000; color:#fff;">Bannen</button>
+  </div>
+
+  <!-- Zurück -->
+  <button id="playerBackBtn" style="margin-top:10px; background:#999; color:#000;">X Zurück</button>
+</div>
+ 
 </script>
 
 </body>
