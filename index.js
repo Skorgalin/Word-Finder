@@ -135,6 +135,99 @@ io.on("connection", (socket)=>{
     io.emit("announcement",{ text:data.text });
   });
 });
+/* ================== PLAYER MANAGEMENT / SPECTATE ================== */
+const onlinePlayers = {}; // email -> socket.id
+const bannedPlayers = {}; // email -> { reason, until: timestamp }
+
+io.on("connection", (socket) => {
+  // Spieler online melden
+  socket.on("player:online", (data) => {
+    const { email } = data;
+
+    // Bann prüfen
+    const ban = bannedPlayers[email];
+    if (ban && Date.now() < ban.until) {
+      socket.emit("player:banned", {
+        reason: ban.reason,
+        remaining: Math.ceil((ban.until - Date.now()) / 1000)
+      });
+      return;
+    }
+
+    onlinePlayers[email] = socket.id;
+    io.emit("players:onlineCount", Object.keys(onlinePlayers).length);
+  });
+
+  // Spieler offline
+  socket.on("player:offline", (data) => {
+    const { email } = data;
+    delete onlinePlayers[email];
+    io.emit("players:onlineCount", Object.keys(onlinePlayers).length);
+  });
+
+  // Live Typing
+  socket.on("player:typing", (data) => {
+    // Broadcast nur an Admins die spectaten
+    // Hier kann erweitert werden, falls Admin Socket IDs verwaltet werden
+  });
+
+  // Item gefunden
+  socket.on("player:itemFound", (data) => {
+    // Broadcast an Admins falls nötig
+  });
+
+  /* ========== ADMIN EVENTS ========== */
+  
+  // Admin: Alle Spieler abrufen
+  socket.on("admin:getPlayers", () => {
+    const allPlayers = Object.keys(onlinePlayers).map(email => ({
+      email,
+      online: true,
+      banned: bannedPlayers[email] ? bannedPlayers[email] : null
+    }));
+    socket.emit("admin:playersList", allPlayers);
+  });
+
+  // Admin: Spieler bannen
+  socket.on("admin:banPlayer", (data) => {
+    const { email, reason, duration } = data; // duration in Sekunden
+    bannedPlayers[email] = { reason, until: Date.now() + duration * 1000 };
+
+    // Wenn Spieler online, kicken
+    const playerSocketId = onlinePlayers[email];
+    if (playerSocketId) {
+      io.to(playerSocketId).emit("player:banned", {
+        reason,
+        remaining: duration
+      });
+      io.sockets.sockets.get(playerSocketId).disconnect(true);
+      delete onlinePlayers[email];
+      io.emit("players:onlineCount", Object.keys(onlinePlayers).length);
+    }
+
+    socket.emit("admin:banSuccess", { email });
+  });
+
+  // Admin: Spectate starten
+  socket.on("spectate:start", (data) => {
+    const { targetEmail } = data;
+    const targetSocketId = onlinePlayers[targetEmail];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("spectate:start", { adminSocket: socket.id });
+      socket.emit("spectate:started", { email: targetEmail });
+    }
+  });
+
+  // Admin: Spectate stoppen
+  socket.on("spectate:stop", (data) => {
+    const { targetEmail } = data;
+    const targetSocketId = onlinePlayers[targetEmail];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit("spectate:stop");
+      socket.emit("spectate:stopped", { email: targetEmail });
+    }
+  });
+});
 
 /* ================= START ================= */
 server.listen(PORT,()=>console.log("Server läuft auf Port",PORT));
