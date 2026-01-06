@@ -176,6 +176,8 @@ loginBtn.onclick = ()=>{
 /* ================= ENTER GAME ================= */
 function enterGame(admin){
   email = emailInput.value;
+  initPlayer(email);
+
   isAdmin = admin;
   adminUnlocked = false;
 
