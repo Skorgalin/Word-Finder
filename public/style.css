@@ -1,0 +1,184 @@
+/* ================= GLOBAL ================= */
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #0f0f0f;
+  color: #ffffff;
+}
+
+/* ================= HEADER ================= */
+header {
+  text-align: center;
+  padding: 10px;
+  background-color: #111;
+  border-bottom: 2px solid #444;
+}
+
+/* ================= LOGIN / GAME CONTAINERS ================= */
+#login, #game {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ================= INPUTS & BUTTONS ================= */
+input, button {
+  font-size: 18px;
+  margin: 5px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 5px;
+}
+
+input {
+  background-color: #222;
+  color: #fff;
+}
+
+button {
+  background-color: #555;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+button:hover {
+  background-color: #777;
+}
+
+/* ================= FOUND ITEMS ================= */
+#foundItems {
+  border: 1px solid #444;
+  padding: 10px;
+  margin-top: 10px;
+  width: 90%;
+  max-height: 200px;
+  overflow-y: auto;
+  background-color: #222;
+  display: none;
+}
+
+.foundItem {
+  padding: 4px;
+  border-bottom: 1px solid #444;
+}
+
+/* ================= ADMIN PANEL ================= */
+#adminPanel {
+  border: 2px solid #0f0;
+  background-color: #000;
+  padding: 10px;
+  margin-top: 10px;
+  width: 90%;
+  display: none;
+  color: #0f0;
+  font-family: "Courier New", Courier, monospace;
+}
+
+#adminPanel input {
+  background-color: #111;
+  color: #0f0;
+}
+
+#adminPanel button {
+  background-color: #0a0;
+  color: #fff;
+}
+
+#adminPanel button:hover {
+  background-color: #0f0;
+  color: #000;
+}
+
+/* ================= ANNOUNCEMENTS ================= */
+.announcement {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #fff;
+  color: #000;
+  padding: 6px 10px;
+  border: 1px solid black;
+  border-radius: 5px;
+}
+
+/* ================= ADMIN SEARCH RESULT ================= */
+#adminSearchResult {
+  padding: 5px;
+  margin-top: 5px;
+  background-color: #111;
+  border: 1px solid #0f0;
+  cursor: pointer;
+}
+
+#adminSearchResult:hover {
+  background-color: #0f0;
+  color: #000;
+}
+
+/* ================= ANNOUNCEMENT INPUT ================= */
+#announceText {
+  width: 80%;
+  margin-bottom: 5px;
+}
+
+/* ================= GAME INPUT ================= */
+#word {
+  width: 200px;
+}
+
+/* ================= BUTTON COLORS ================= */
+#registerBtn {
+  background-color: #0077ff;
+}
+
+#registerBtn:hover {
+  background-color: #00aaff;
+}
+
+#loginBtn {
+  background-color: #00aa00;
+}
+
+#loginBtn:hover {
+  background-color: #00ff00;
+}
+
+#adminBtn {
+  background-color: #ff0000;
+  color: #fff;
+}
+
+#adminBtn:hover {
+  background-color: #ff5555;
+}
+
+/* ================= SEARCH BUTTONS ================= */
+.searchBtn {
+  background-color: #888;
+  color: #fff;
+}
+
+.searchBtn:hover {
+  background-color: #aaa;
+}
+
+/* ================= ICON BUTTONS ================= */
+.homeBtn {
+  background-color: #555;
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 3px;
+}
+
+.homeBtn:hover {
+  background-color: #777;
+  color: #000;
+}
