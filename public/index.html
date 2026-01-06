@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Word Finder Game</title>
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<header><h2>Word Finder Game</h2></header>
+
+<!-- LOGIN -->
+<div id="login">
+  <input id="email" type="email" placeholder="E-Mail" autocomplete="username" required>
+  <input id="password" type="password" placeholder="Passwort" autocomplete="current-password" required>
+
+  <button id="registerBtn" type="button">Registrieren</button>
+  <button id="loginBtn" type="button" style="display:none;">Login</button>
+</div>
+
+<!-- GAME -->
+<div id="game" style="display:none;">
+  <input id="word" placeholder="Wort eingeben">
+  <button onclick="submitItem()">OK</button>
+  <button onclick="toggleFound()">Found Items</button>
+  <button id="adminBtn" style="display:none;" onclick="askAdminPassword()">Admin</button>
+  <button id="logoutBtn" onclick="logout()">Logout</button>
+
+  <div id="foundItems" style="display:none;">
+    <div id="foundItemsList"></div>
+    <input id="foundSearchInput" placeholder="Output suchen">
+    <button onclick="foundSearch()">OK</button>
+    <button onclick="resetFoundSearch()">🏠</button>
+    <div id="foundSearchResult"></div>
+  </div>
+
+  <div id="adminPanel" style="display:none;">
+    <h3>Admin Dashboard</h3>
+    <input id="announceText" placeholder="Ankündigung">
+    <button onclick="sendAnnouncement()">Senden</button>
+
+    <hr>
+
+    <input id="adminSearchInput" placeholder="Output eingeben">
+    <button onclick="adminSearch()">OK</button>
+    <div id="adminSearchResult"></div>
+
+    <hr>
+
+    <button onclick="showPlayers()">Spieler verwalten</button>
+    <div id="playerAdminPanel" style="display:none;">
+      <input id="playerSearchInput" placeholder="Spieler suchen">
+      <button onclick="searchPlayer()">OK</button>
+      <div id="playerSearchResult"></div>
+      <div>Online Spieler: <span id="onlineCount">0</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="announcements"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="player.js"></script>
+
+<script>
+let email = "";
+let isAdmin = false;
+let adminUnlocked = false;
+
+const socket = io();
+
+/* ----------------- ELEMENTS ----------------- */
+const emailInput = document.getElementById("email");
+const passwordInput = document.getElementById("password");
+const loginBtn = document.getElementById("loginBtn");
+const registerBtn = document.getElementById("registerBtn");
+const loginDiv = document.getElementById("login");
+const gameDiv = document.getElementById("game");
+const adminBtn = document.getElementById("adminBtn");
+const adminPanel = document.getElementById("adminPanel");
+const foundItemsDiv = document.getElementById("foundItems");
+const foundItemsList = document.getElementById("foundItemsList");
+
+/* ----------------- EMAIL CHECK ----------------- */
+emailInput.addEventListener("input",()=>{
+  fetch("/checkEmail",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email: emailInput.value })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    loginBtn.style.display = d.exists ? "inline" : "none";
+    registerBtn.style.display = d.exists ? "none" : "inline";
+  });
+});
+
+/* ----------------- REGISTER ----------------- */
+registerBtn.onclick = ()=>{
+  const emailVal = emailInput.value.trim();
+  const passVal = passwordInput.value.trim();
+  if(!emailVal || !passVal) return alert("Bitte E-Mail und Passwort eingeben");
+
+  fetch("/register",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email: emailVal, password: passVal })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      enterGame(d.admin);
+    } else {
+      alert("Registrierung fehlgeschlagen");
+    }
+  });
+};
+
+/* ----------------- LOGIN ----------------- */
+loginBtn.onclick = ()=>{
+  const emailVal = emailInput.value.trim();
+  const passVal = passwordInput.value.trim();
+  if(!emailVal || !passVal) return alert("Bitte E-Mail und Passwort eingeben");
+
+  fetch("/login",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email: emailVal, password: passVal })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      enterGame(d.admin);
+    } else {
+      alert("Falsches Passwort");
+    }
+  });
+};
+
+/* ----------------- ENTER GAME ----------------- */
+function enterGame(admin){
+  email = emailInput.value;
+  isAdmin = admin;
+  adminUnlocked = false;
+
+  loginDiv.style.display = "none";
+  gameDiv.style.display = "flex";
+
+  if(isAdmin) adminBtn.style.display = "inline";
+
+  emailInput.value="";
+  passwordInput.value="";
+
+  initPlayer(email); // player.js
+}
+
+/* ----------------- LOGOUT ----------------- */
+function logout(){
+  email = "";
+  isAdmin = false;
+  adminUnlocked = false;
+
+  loginDiv.style.display = "flex";
+  gameDiv.style.display = "none";
+  adminPanel.style.display = "none";
+  foundItemsDiv.style.display = "none";
+  foundItemsList.innerHTML="";
+  emailInput.value="";
+  passwordInput.value="";
+  loginBtn.style.display="none";
+  registerBtn.style.display="inline";
+
+  playerSocket.emit("player:offline", { email: email });
+}
+
+/* ----------------- ITEMS ----------------- */
+let foundItemsMap = {}; // input -> output
+
+function submitItem(){
+  const input=document.getElementById("word").value;
+  if(!input) return;
+
+  fetch("/submitItem",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ email, input })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      // verhindern doppelte
+      if(!foundItemsMap[d.input]){
+        foundItemsMap[d.input] = d.output;
+        updateFoundItems();
+      }
+      document.getElementById("word").value="";
+      // kurz unter Textfeld anzeigen
+      showTempFound(d.input+" → "+d.output);
+    }
+  });
+}
+
+function updateFoundItems(){
+  foundItemsList.innerHTML="";
+  for(const [input,output] of Object.entries(foundItemsMap)){
+    const div=document.createElement("div");
+    div.textContent = input+" → "+output;
+    foundItemsList.appendChild(div);
+  }
+}
+
+function toggleFound(){
+  foundItemsDiv.style.display = foundItemsDiv.style.display==="none"?"block":"none";
+}
+
+function showTempFound(text){
+  const div=document.createElement("div");
+  div.className="announcement";
+  div.textContent=text;
+  document.body.appendChild(div);
+  setTimeout(()=>div.remove(),3000);
+}
+
+/* ----------------- ADMIN ----------------- */
+function askAdminPassword(){
+  const pw = prompt("Admin Passwort:");
+  if(pw === "X9$QvR7!eM2#A8wK@C"){
+    adminUnlocked = true;
+    adminPanel.style.display = "block";
+  } else {
+    alert("Falsches Passwort");
+  }
+}
+
+/* ----------------- LIVE ANNOUNCEMENTS ----------------- */
+socket.on("announcement",data=>{
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent=data.text;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+});
+
+function sendAnnouncement(){
+  if(!adminUnlocked) return;
+  const text=document.getElementById("announceText").value;
+  socket.emit("adminAnnouncement",{text,password:"X9$QvR7!eM2#A8wK@C"});
+  document.getElementById("announceText").value="";
+}
+
+/* ----------------- ADMIN SEARCH ----------------- */
+function adminSearch(){
+  const query=document.getElementById("adminSearchInput").value;
+  fetch("/adminSearch",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({ query })
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    if(d.ok){
+      const res=document.getElementById("adminSearchResult");
+      res.textContent = d.output; // kein prefix mehr
+      res.onclick = ()=>{
+        const ni=prompt("Neuer Input:", d.input);
+        if(!ni) return;
+        fetch("/adminChangeInput",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({ oldInput:d.input, newInput:ni })
+        }).then(()=>{
+          // Update foundItems für alle Spieler (nur lokal hier)
+          if(foundItemsMap[d.input]){
+            foundItemsMap[ni] = foundItemsMap[d.input];
+            delete foundItemsMap[d.input];
+            updateFoundItems();
+          }
+          res.textContent = d.output;
+        });
+      };
+    }
+  });
+}
+
+/* ----------------- FOUND ITEMS SEARCH ----------------- */
+function foundSearch(){
+  const val=document.getElementById("foundSearchInput").value;
+  let found=false;
+  for(const [input,output] of Object.entries(foundItemsMap)){
+    if(output === val){
+      document.getElementById("foundSearchResult").textContent = input+" → "+output;
+      found=true;
+      break;
+    }
+  }
+  if(!found){
+    document.getElementById("foundSearchResult").textContent="Du hast dieses item noch nicht gefunden, such einfach weiter.";
+  }
+}
+
+function resetFoundSearch(){
+  document.getElementById("foundSearchResult").textContent="";
+  updateFoundItems();
+}
+</script>
+
+</body>
+</html>
