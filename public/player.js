@@ -121,3 +121,12 @@ window.addEventListener("beforeunload", () => {
     email: currentPlayerEmail
   });
 });
+playerSocket.on("player:banned", data => {
+  document.body.innerHTML = `
+    <div style="color:red;text-align:center;margin-top:50px;">
+      <h1>Du wurdest gebannt</h1>
+      <p>${data.reason}</p>
+      <p>Restzeit: ${data.remaining}s</p>
+    </div>
+  `;
+});
