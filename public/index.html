@@ -288,6 +288,14 @@ function logout(){
 /* =================================================
    WORD FINDER
    ================================================= */
+function showItemNotification(input, output, firstDiscovery){
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = `${input} → ${output}${firstDiscovery ? " (First Discovery)" : ""}`;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+}
+
 function submitItem(){
   const input = document.getElementById("word").value.trim();
   if(!input) return;
@@ -306,6 +314,7 @@ function submitItem(){
     gameFoundSet.add(key);
 
     notifyItemFound(d.input, d.output);
+    showItemNotification(d.input, d.output, d.firstDiscovery);
 
     const div = document.createElement("div");
     div.className="foundItem";
