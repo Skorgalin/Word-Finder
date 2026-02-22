@@ -42,12 +42,33 @@ function saveWords(words) {
 }
 
 /* ================= RANDOM OUTPUT ================= */
-function makeOutput(input) {
+function makeOutput(inputLength) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let output = "";
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; i < inputLength; i++) {
     output += chars[Math.floor(Math.random() * chars.length)];
   }
+  return output;
+}
+
+function getExistingOutputMap(words) {
+  const outputToInput = {};
+  for (const inputKey in words) {
+    const existingOutput = words[inputKey]?.output;
+    if (existingOutput) outputToInput[existingOutput] = inputKey;
+  }
+  return outputToInput;
+}
+
+function makeUniqueOutputForInput(input, words) {
+  const outputToInput = getExistingOutputMap(words);
+  let output = makeOutput(input.length);
+
+  // Kollisionen vermeiden: ein Output darf nur zu genau einem Input gehören.
+  while (outputToInput[output] && outputToInput[output] !== input) {
+    output = makeOutput(input.length);
+  }
+
   return output;
 }
 
@@ -96,26 +117,35 @@ app.post("/login", async (req, res) => {
 // WORD SUBMIT + FIRST DISCOVERY
 app.post("/submitItem", (req, res) => {
   const { email, input } = req.body;
-  if (!input) return res.json({ ok: false });
+  const normalizedInput = String(input || "").trim();
+  if (!normalizedInput) return res.json({ ok: false });
 
   const words = loadWords();
-  const output = makeOutput(input);
-
   let firstDiscovery = false;
 
-  if (!words[input]) {
-    words[input] = {
-      output,
-      discoveredBy: email,
-      time: Date.now()
-    };
-    saveWords(words);
-    firstDiscovery = true;
+  // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
+  if (words[normalizedInput]) {
+    return res.json({
+      ok: true,
+      input: normalizedInput,
+      output: words[normalizedInput].output,
+      firstDiscovery
+    });
   }
+
+  const output = makeUniqueOutputForInput(normalizedInput, words);
+
+  words[normalizedInput] = {
+    output,
+    discoveredBy: email,
+    time: Date.now()
+  };
+  saveWords(words);
+  firstDiscovery = true;
 
   res.json({
     ok: true,
-    input,
+    input: normalizedInput,
     output,
     firstDiscovery
   });
