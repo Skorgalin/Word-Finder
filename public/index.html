@@ -310,19 +310,25 @@ function submitItem(){
     if(!d.ok) return;
 
     const key = d.input + "->" + d.output;
-    if(gameFoundSet.has(key)) return; // kein Duplikat
-    gameFoundSet.add(key);
 
-    notifyItemFound(d.input, d.output);
+    // Spieler darf denselben Input mehrfach eingeben.
+    // Found Items bleibt trotzdem einzigartig pro input->output.
+    if(!gameFoundSet.has(key)){
+      gameFoundSet.add(key);
+
+      notifyItemFound(d.input, d.output);
+
+      const div = document.createElement("div");
+      div.className="foundItem";
+      div.innerHTML =
+        d.input+" → "+d.output+
+        (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+
+      document.getElementById("foundItems").prepend(div);
+    }
+
+    // Notification bei jedem erfolgreichen Submit anzeigen.
     showItemNotification(d.input, d.output, d.firstDiscovery);
-
-    const div = document.createElement("div");
-    div.className="foundItem";
-    div.innerHTML =
-      d.input+" → "+d.output+
-      (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
-
-    document.getElementById("foundItems").prepend(div);
     document.getElementById("word").value="";
   });
 }
