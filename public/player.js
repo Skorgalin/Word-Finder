@@ -36,7 +36,7 @@ if (wordInput) {
 /* ================= ITEM GEFUNDEN ================= */
 function notifyItemFound(input, output) {
   const key = input + "->" + output;
-  if (foundSet.has(key)) return; // Schon angezeigt, nichts tun
+  if (foundSet.has(key)) return; // Schon gemeldet, nichts tun
   foundSet.add(key);
 
   playerSocket.emit("player:itemFound", {
@@ -44,12 +44,6 @@ function notifyItemFound(input, output) {
     input,
     output
   });
-
-  const div = document.createElement("div");
-  div.className = "foundItem";
-  div.innerHTML = input + " → " + output;
-  const foundContainer = document.getElementById("foundItems");
-  if (foundContainer) foundContainer.prepend(div);
 }
 
 /* ================= BAN / OFFLINE ================= */

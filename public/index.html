@@ -73,8 +73,8 @@ input,button{
 
 <!-- LOGIN -->
 <div id="login">
-  <input id="email" type="email" placeholder="E-Mail" required>
-  <input id="password" type="password" placeholder="Passwort" required>
+  <input id="email" name="email" type="email" autocomplete="email" placeholder="E-Mail" required>
+  <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required>
 
   <button id="registerBtn">Registrieren</button>
   <button id="loginBtn" style="display:none;">Login</button>
@@ -82,7 +82,7 @@ input,button{
 
 <!-- GAME -->
 <div id="game" style="display:none;">
-  <input id="word" placeholder="Wort eingeben">
+  <input id="word" name="gameWord" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Wort eingeben">
   <button onclick="submitItem()">OK</button>
 
   <button onclick="toggleFound()">Found Items</button>
