@@ -131,7 +131,7 @@ let email = "";
 let isAdmin = false;
 let adminUnlocked = false;
 
-const foundSet = new Set(); // NEU: Für Found Items ohne Duplikate
+const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
 /* =================================================
    EMAIL CHECK
@@ -154,45 +154,106 @@ emailInput.addEventListener("input", ()=>{
 /* =================================================
    REGISTER
    ================================================= */
-registerBtn.onclick = ()=>{
-  fetch("/register",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
-    } else {
-      alert("Registrierung fehlgeschlagen");
+function setAuthButtonsDisabled(disabled){
+  registerBtn.disabled = disabled;
+  loginBtn.disabled = disabled;
+}
+
+registerBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const registerResponse = await fetch("/register",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const registerData = await registerResponse.json();
+
+    if(registerData.ok){
+      enterGame(registerData.admin);
+      return;
     }
-  });
+
+    // Falls der User bereits existiert, direkt als Login versuchen,
+    // damit der Registrieren-Button ebenfalls ins Spiel führt.
+    if(registerData.error === "exists"){
+      const loginResponse = await fetch("/login",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          email: enteredEmail,
+          password: enteredPassword
+        })
+      });
+
+      const loginData = await loginResponse.json();
+      if(loginData.ok){
+        enterGame(loginData.admin);
+      } else {
+        alert("Account existiert bereits. Bitte korrekt einloggen.");
+      }
+      return;
+    }
+
+    alert("Registrierung fehlgeschlagen");
+  } catch (error) {
+    console.error("Register/Login-Flow Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
    LOGIN
    ================================================= */
-loginBtn.onclick = ()=>{
-  fetch("/login",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
+loginBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const response = await fetch("/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const data = await response.json();
+
+    if(data.ok){
+      enterGame(data.admin);
     } else {
       alert("Falsches Passwort");
     }
-  });
+  } catch (error) {
+    console.error("Login Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
@@ -227,6 +288,14 @@ function logout(){
 /* =================================================
    WORD FINDER
    ================================================= */
+function showItemNotification(input, output, firstDiscovery){
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = `${input} → ${output}${firstDiscovery ? " (First Discovery)" : ""}`;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+}
+
 function submitItem(){
   const input = document.getElementById("word").value.trim();
   if(!input) return;
@@ -241,10 +310,11 @@ function submitItem(){
     if(!d.ok) return;
 
     const key = d.input + "->" + d.output;
-    if(foundSet.has(key)) return; // NEU: kein Duplikat
-    foundSet.add(key);
+    if(gameFoundSet.has(key)) return; // kein Duplikat
+    gameFoundSet.add(key);
 
     notifyItemFound(d.input, d.output);
+    showItemNotification(d.input, d.output, d.firstDiscovery);
 
     const div = document.createElement("div");
     div.className="foundItem";
