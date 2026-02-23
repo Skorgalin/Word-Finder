@@ -1,7 +1,7 @@
 /* =====================================================
    PLAYER.JS
    - Spielerstatus & Live Typing
-   - Spectate / Admin Funktionen
+   - Spectate / Owner Funktionen
    ===================================================== */
 
 const playerSocket = io();
@@ -36,7 +36,7 @@ if (wordInput) {
 /* ================= ITEM GEFUNDEN ================= */
 function notifyItemFound(input, output) {
   const key = input + "->" + output;
-  if (foundSet.has(key)) return; // Schon angezeigt, nichts tun
+  if (foundSet.has(key)) return; // Schon gemeldet, nichts tun
   foundSet.add(key);
 
   playerSocket.emit("player:itemFound", {
@@ -44,12 +44,6 @@ function notifyItemFound(input, output) {
     input,
     output
   });
-
-  const div = document.createElement("div");
-  div.className = "foundItem";
-  div.innerHTML = input + " → " + output;
-  const foundContainer = document.getElementById("foundItems");
-  if (foundContainer) foundContainer.prepend(div);
 }
 
 /* ================= BAN / OFFLINE ================= */
@@ -71,7 +65,7 @@ playerSocket.on("player:banned", (data) => {
   overlay.innerHTML = `
     <h1>Du wurdest gebannt!</h1>
     <p>Grund: ${data.reason}</p>
-    <p>Dauer: ${data.remaining} Sekunden</p>
+    <p>Dauer: ${data.permanent ? "Permanent" : `${data.remaining} Sekunden`}</p>
   `;
   document.body.appendChild(overlay);
   if(wordInput) wordInput.disabled = true;
@@ -80,18 +74,18 @@ playerSocket.on("player:banned", (data) => {
 /* ================= SPECTATE ================= */
 playerSocket.on("spectate:start", (data) => {
   isSpectating = true;
-  alert("Admin beobachtet dich jetzt (Spectate aktiv).");
+  alert("Owner beobachtet dich jetzt (Spectate aktiv).");
 });
 
 playerSocket.on("spectate:stop", () => {
   isSpectating = false;
-  alert("Admin hat Spectate beendet.");
+  alert("Owner hat Spectate beendet.");
 });
 
-/* ================= ADMIN EVENTS ================= */
+/* ================= OWNER EVENTS ================= */
 
-/* Admin: Spielerliste empfangen */
-playerSocket.on("admin:playersList", (players) => {
+/* Owner: Spielerliste empfangen */
+playerSocket.on("owner:playersList", (players) => {
   const panel = document.getElementById("playersList");
   if (!panel) return;
   panel.innerHTML = "";
@@ -106,7 +100,7 @@ playerSocket.on("admin:playersList", (players) => {
     const spectateBtn = document.createElement("button");
     spectateBtn.textContent = "Spectate";
     spectateBtn.onclick = () => {
-      playerSocket.emit("admin:spectateStart", { email: p.email });
+      playerSocket.emit("owner:spectateStart", { email: p.email });
     };
     const banBtn = document.createElement("button");
     banBtn.textContent = "Bannen";
@@ -114,7 +108,7 @@ playerSocket.on("admin:playersList", (players) => {
       const reason = prompt("Grund für Ban:");
       const duration = parseInt(prompt("Dauer in Sekunden:"));
       if (!reason || !duration) return;
-      playerSocket.emit("admin:banPlayer", { email: p.email, reason, duration });
+      playerSocket.emit("owner:banPlayer", { email: p.email, reason, duration });
     };
     div.appendChild(spectateBtn);
     div.appendChild(banBtn);
@@ -123,8 +117,8 @@ playerSocket.on("admin:playersList", (players) => {
   });
 });
 
-/* Admin: Bann erfolgreich */
-playerSocket.on("admin:banSuccess", (data) => {
+/* Owner: Bann erfolgreich */
+playerSocket.on("owner:banSuccess", (data) => {
   alert(`${data.email} wurde gebannt.`);
 });
 
