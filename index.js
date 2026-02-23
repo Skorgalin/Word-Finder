@@ -11,6 +11,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const OWNER_EMAIL = "till.behner@icloud.com";
+const REQUIRE_SUPABASE = process.env.REQUIRE_SUPABASE === "true";
 
 /* ================= BASIC ================= */
 app.use(express.json());
@@ -70,11 +71,17 @@ function ensureSupabase(res) {
 
 function ensurePersistentStore(res) {
   if (supabase) return true;
-  res.status(503).json({
-    ok: false,
-    error: "Persistenz benötigt Supabase. Bitte SUPABASE_URL und SUPABASE_KEY setzen."
-  });
-  return false;
+
+  if (REQUIRE_SUPABASE) {
+    res.status(503).json({
+      ok: false,
+      error: "Persistenz benötigt Supabase. Bitte SUPABASE_URL und SUPABASE_KEY setzen."
+    });
+    return false;
+  }
+
+  // Default: lokaler Fallback erlaubt (users.json / words.json)
+  return true;
 }
 
 async function saveScore(username, score) {
