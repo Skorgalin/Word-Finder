@@ -378,6 +378,16 @@ function submitItem(){
       document.getElementById("foundItems").prepend(div);
     }
 
+
+      const div = document.createElement("div");
+      div.className="foundItem";
+      div.innerHTML =
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]"+
+        (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+
+      document.getElementById("foundItems").prepend(div);
+    }
+
     // Notification bei jedem erfolgreichen Submit anzeigen.
     showItemNotification(d.input, d.output, d.rarity, d.firstDiscovery);
     document.getElementById("word").value="";
@@ -393,16 +403,17 @@ function toggleFound(){
    OWNER
    ================================================= */
 function askOwnerPassword(){
+  const panel = document.getElementById("ownerPanel");
+
   if(ownerUnlocked){
-    ownerPanel.style.display =
-      ownerPanel.style.display==="none"?"block":"none";
+    panel.style.display = panel.style.display==="none"?"block":"none";
     return;
   }
 
   const pw = prompt("Owner Passwort:");
   if(pw==="X9$QvR7!eM2#A8wK@C"){
     ownerUnlocked=true;
-    document.getElementById("ownerPanel").style.display="block";
+    panel.style.display="block";
     document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
     document.getElementById("ownerAnnouncementSection").style.display = isOwner ? "block" : "none";
   } else {
