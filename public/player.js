@@ -86,44 +86,7 @@ playerSocket.on("spectate:stop", () => {
 });
 
 /* ================= OWNER EVENTS ================= */
-
-/* Owner: Spielerliste empfangen */
-playerSocket.on("owner:playersList", (players) => {
-  const panel = document.getElementById("playersList");
-  if (!panel) return;
-  panel.innerHTML = "";
-  players.forEach(p => {
-    const div = document.createElement("div");
-    div.style.border = "1px solid #555";
-    div.style.padding = "5px";
-    div.style.margin = "3px";
-    div.textContent = `${p.email} | Online: ${p.online || "Ja"} | Banned: ${p.banned ? p.banned.reason : "Nein"}`;
-    
-    // Buttons für Spectate / Ban
-    const spectateBtn = document.createElement("button");
-    spectateBtn.textContent = "Spectate";
-    spectateBtn.onclick = () => {
-      playerSocket.emit("owner:spectateStart", { email: p.email });
-    };
-    const banBtn = document.createElement("button");
-    banBtn.textContent = "Bannen";
-    banBtn.onclick = () => {
-      const reason = prompt("Grund für Ban:");
-      const duration = parseInt(prompt("Dauer in Sekunden:"));
-      if (!reason || !duration) return;
-      playerSocket.emit("owner:banPlayer", { email: p.email, reason, duration });
-    };
-    div.appendChild(spectateBtn);
-    div.appendChild(banBtn);
-
-    panel.appendChild(div);
-  });
-});
-
-/* Owner: Bann erfolgreich */
-playerSocket.on("owner:banSuccess", (data) => {
-  alert(`${data.email} wurde gebannt.`);
-});
+// Owner-Panel-Events werden zentral in index.html gehandhabt.
 
 /* ================= OFFLINE ================= */
 window.addEventListener("beforeunload", () => {
