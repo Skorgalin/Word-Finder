@@ -107,7 +107,9 @@ input,button{
     <hr>
 
     <button onclick="loadPlayers()">Spieler verwalten</button>
+    <button onclick="loadSuspectPlayers()">Suspect Player</button>
     <div id="playersList"></div>
+    <div id="suspectPlayersList"></div>
 
     <hr>
 
@@ -297,10 +299,14 @@ function logout(){
 /* =================================================
    WORD FINDER
    ================================================= */
-function showItemNotification(input, output, firstDiscovery){
+function rarityLabel(rarity){
+  return (rarity || "common").toUpperCase();
+}
+
+function showItemNotification(input, output, rarity, firstDiscovery){
   const ann=document.createElement("div");
   ann.className="announcement";
-  ann.textContent = `${input} → ${output}${firstDiscovery ? " (First Discovery)" : ""}`;
+  ann.textContent = `${input} → ${output} [${rarityLabel(rarity)}]${firstDiscovery ? " (First Discovery)" : ""}`;
   document.getElementById("announcements").appendChild(ann);
   setTimeout(()=>ann.remove(),5000);
 }
@@ -330,14 +336,14 @@ function submitItem(){
       const div = document.createElement("div");
       div.className="foundItem";
       div.innerHTML =
-        d.input+" → "+d.output+
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]"+
         (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
 
       document.getElementById("foundItems").prepend(div);
     }
 
     // Notification bei jedem erfolgreichen Submit anzeigen.
-    showItemNotification(d.input, d.output, d.firstDiscovery);
+    showItemNotification(d.input, d.output, d.rarity, d.firstDiscovery);
     document.getElementById("word").value="";
   });
 }
@@ -399,7 +405,7 @@ function adminSearch(){
   .then(d=>{
     if(d.ok){
       document.getElementById("adminSearchResult").textContent =
-        d.input+" → "+d.output;
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]";
     }
   });
 }
@@ -408,6 +414,40 @@ function adminSearch(){
    SPIELER VERWALTEN
    ================================================= */
 let currentSpectateEmail = "";
+
+function loadSuspectPlayers(){
+  if(!adminUnlocked) return;
+  socket.emit("admin:getSuspectPlayers");
+}
+
+function createPlayerActionRow(emailText, metaText){
+  const row=document.createElement("div");
+  row.style.border = "1px solid #555";
+  row.style.padding = "6px";
+  row.style.marginBottom = "6px";
+
+  const label=document.createElement("div");
+  label.textContent = emailText;
+
+  const meta=document.createElement("div");
+  meta.style.fontSize = "14px";
+  meta.style.opacity = "0.85";
+  meta.textContent = metaText;
+
+  const spectateBtn=document.createElement("button");
+  spectateBtn.textContent="Spectate";
+  spectateBtn.onclick=()=>startSpectate(emailText);
+
+  const banBtn=document.createElement("button");
+  banBtn.textContent="Bannen";
+  banBtn.onclick=()=>openBanDialog(emailText);
+
+  row.appendChild(label);
+  row.appendChild(meta);
+  row.appendChild(spectateBtn);
+  row.appendChild(banBtn);
+  return row;
+}
 
 function loadPlayers(){
   if(!adminUnlocked) return;
@@ -478,26 +518,26 @@ socket.on("admin:playersList",(players)=>{
   }
 
   players.forEach(p=>{
-    const row=document.createElement("div");
-    row.style.border = "1px solid #555";
-    row.style.padding = "6px";
-    row.style.marginBottom = "6px";
+    list.appendChild(createPlayerActionRow(p.email, "Online"));
+  });
+});
 
-    const label=document.createElement("div");
-    label.textContent=p.email;
+socket.on("admin:suspectPlayers",(suspects)=>{
+  const list=document.getElementById("suspectPlayersList");
+  list.innerHTML = "";
 
-    const spectateBtn=document.createElement("button");
-    spectateBtn.textContent="Spectate";
-    spectateBtn.onclick=()=>startSpectate(p.email);
+  if(!suspects.length){
+    list.textContent = "Keine verdächtigen Spieler gefunden.";
+    return;
+  }
 
-    const banBtn=document.createElement("button");
-    banBtn.textContent="Bannen";
-    banBtn.onclick=()=>openBanDialog(p.email);
+  const title=document.createElement("h4");
+  title.textContent = "Suspect Player";
+  list.appendChild(title);
 
-    row.appendChild(label);
-    row.appendChild(spectateBtn);
-    row.appendChild(banBtn);
-    list.appendChild(row);
+  suspects.forEach(player=>{
+    const meta = `Rare: ${player.rareCount} | Leg: ${player.legendärCount} | Myth: ${player.mythischCount} | Godly: ${player.godlyCount} | Score: ${player.score}`;
+    list.appendChild(createPlayerActionRow(player.email, meta));
   });
 });
 
