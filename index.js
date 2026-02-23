@@ -3,6 +3,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const fs = require("fs-extra");
 const bcrypt = require("bcrypt");
+let createClient = null;
 
 const app = express();
 const server = http.createServer(app);
@@ -39,6 +40,128 @@ function loadWords() {
 }
 function saveWords(words) {
   fs.writeJsonSync(WORDS_FILE, words, { spaces: 2 });
+}
+
+
+/* ================= SUPABASE ================= */
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+
+if (supabaseUrl && supabaseKey) {
+  ({ createClient } = require("@supabase/supabase-js"));
+}
+
+const supabase = supabaseUrl && supabaseKey
+  ? createClient(supabaseUrl, supabaseKey)
+  : null;
+
+function ensureSupabase(res) {
+  if (supabase) return true;
+  res.status(503).json({
+    ok: false,
+    error: "Supabase ist nicht konfiguriert. Bitte SUPABASE_URL und SUPABASE_KEY setzen."
+  });
+  return false;
+}
+
+async function saveScore(username, score) {
+  const { error } = await supabase.from("scores").insert([{ username, score }]);
+  if (error) throw error;
+}
+
+async function getLeaderboard() {
+  const { data, error } = await supabase
+    .from("scores")
+    .select("*")
+    .order("score", { ascending: false })
+    .limit(10);
+
+  if (error) throw error;
+  return data;
+}
+
+
+async function getUserByEmail(email) {
+  if (!supabase) {
+    const users = loadUsers();
+    return users[email] ? { email, ...users[email] } : null;
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .select("email,password,admin")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function createUser(email, passwordHash, admin) {
+  if (!supabase) {
+    const users = loadUsers();
+    users[email] = { password: passwordHash, admin };
+    saveUsers(users);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("users")
+    .insert([{ email, password: passwordHash, admin }]);
+
+  if (error) throw error;
+}
+
+async function getWordByInput(input) {
+  if (!supabase) {
+    const words = loadWords();
+    return words[input] || null;
+  }
+
+  const { data, error } = await supabase
+    .from("word_mappings")
+    .select("input,output,rarity,discovered_by,discovered_at")
+    .eq("input", input)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getAllWordsMap() {
+  if (!supabase) return loadWords();
+
+  const { data, error } = await supabase
+    .from("word_mappings")
+    .select("input,output,rarity,discovered_by,discovered_at");
+
+  if (error) throw error;
+
+  const words = {};
+  for (const row of data || []) {
+    words[row.input] = {
+      output: row.output,
+      rarity: row.rarity,
+      discoveredBy: row.discovered_by,
+      time: row.discovered_at
+    };
+  }
+  return words;
+}
+
+async function createWordMapping(input, output, rarity, discoveredBy, discoveredAt) {
+  if (!supabase) {
+    const words = loadWords();
+    words[input] = { output, rarity, discoveredBy, time: discoveredAt };
+    saveWords(words);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("word_mappings")
+    .insert([{ input, output, rarity, discovered_by: discoveredBy, discovered_at: discoveredAt }]);
+
+  if (error) throw error;
 }
 
 /* ================= RANDOM OUTPUT ================= */
@@ -142,94 +265,148 @@ function calculateSuspectPlayers(words) {
 /* ================= AUTH ================= */
 
 // CHECK EMAIL
-app.post("/checkEmail", (req, res) => {
+app.post("/checkEmail", async (req, res) => {
   const { email } = req.body;
-  const users = loadUsers();
-  res.json({ exists: !!users[email] });
+  try {
+    const user = await getUserByEmail(email);
+    res.json({ exists: !!user });
+  } catch (error) {
+    console.error("checkEmail Fehler:", error.message);
+    res.status(500).json({ ok: false });
+  }
 });
 
 // REGISTER
 app.post("/register", async (req, res) => {
   const { email, password } = req.body;
-  const users = loadUsers();
 
-  if (users[email]) return res.json({ ok: false, error: "exists" });
+  try {
+    const existingUser = await getUserByEmail(email);
+    if (existingUser) return res.json({ ok: false, error: "exists" });
 
-  const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 10);
+    const admin = email === "till.behner@icloud.com";
+    await createUser(email, hash, admin);
 
-  users[email] = {
-    password: hash,
-    admin: email === "till.behner@icloud.com"
-  };
-
-  saveUsers(users);
-  res.json({ ok: true, admin: users[email].admin });
+    res.json({ ok: true, admin });
+  } catch (error) {
+    console.error("register Fehler:", error.message);
+    res.status(500).json({ ok: false, error: "server" });
+  }
 });
 
 // LOGIN
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
-  const users = loadUsers();
 
-  if (!users[email]) return res.json({ ok: false });
+  try {
+    const user = await getUserByEmail(email);
+    if (!user) return res.json({ ok: false });
 
-  const ok = await bcrypt.compare(password, users[email].password);
-  if (!ok) return res.json({ ok: false });
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.json({ ok: false });
 
-  res.json({ ok: true, admin: users[email].admin });
+    res.json({ ok: true, admin: !!user.admin });
+  } catch (error) {
+    console.error("login Fehler:", error.message);
+    res.status(500).json({ ok: false });
+  }
 });
 
 /* ================= GAME ================= */
 
 // WORD SUBMIT + FIRST DISCOVERY
-app.post("/submitItem", (req, res) => {
+app.post("/submitItem", async (req, res) => {
   const { email, input } = req.body;
   const normalizedInput = String(input || "").trim();
   if (!normalizedInput) return res.json({ ok: false });
 
-  const words = loadWords();
-  let firstDiscovery = false;
+  try {
+    let firstDiscovery = false;
+    const existing = await getWordByInput(normalizedInput);
 
-  // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
-  if (words[normalizedInput]) {
-    const existing = words[normalizedInput];
-    return res.json({
+    // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
+    if (existing) {
+      return res.json({
+        ok: true,
+        input: normalizedInput,
+        output: existing.output,
+        rarity: existing.rarity || "common",
+        firstDiscovery
+      });
+    }
+
+    const words = await getAllWordsMap();
+    const output = makeUniqueOutput(words);
+    const rarity = pickRarity();
+    const discoveredAt = Date.now();
+
+    await createWordMapping(normalizedInput, output, rarity, email, discoveredAt);
+    firstDiscovery = true;
+
+    res.json({
       ok: true,
       input: normalizedInput,
-      output: existing.output,
-      rarity: existing.rarity || "common",
+      output,
+      rarity,
       firstDiscovery
     });
+  } catch (error) {
+    console.error("submitItem Fehler:", error.message);
+    res.status(500).json({ ok: false, error: "server" });
   }
-
-  const output = makeUniqueOutput(words);
-  const rarity = pickRarity();
-
-  words[normalizedInput] = {
-    output,
-    rarity,
-    discoveredBy: email,
-    time: Date.now()
-  };
-  saveWords(words);
-  firstDiscovery = true;
-
-  res.json({
-    ok: true,
-    input: normalizedInput,
-    output,
-    rarity,
-    firstDiscovery
-  });
 });
 
 // ADMIN SEARCH
-app.post("/adminSearch", (req, res) => {
+app.post("/adminSearch", async (req, res) => {
   const { query } = req.body;
-  const words = loadWords();
 
-  if (!words[query]) return res.json({ ok: false });
+  try {
+    const word = await getWordByInput(query);
+    if (!word) return res.json({ ok: false });
 
+    res.json({
+      ok: true,
+      input: query,
+      output: word.output,
+      rarity: word.rarity || "common"
+    });
+  } catch (error) {
+    console.error("adminSearch Fehler:", error.message);
+    res.status(500).json({ ok: false, error: "server" });
+  }
+});
+
+
+// SCORE SPEICHERN (SUPABASE)
+app.post("/save-score", async (req, res) => {
+  if (!ensureSupabase(res)) return;
+
+  const { username, score } = req.body;
+  if (!username || Number.isNaN(Number(score))) {
+    return res.status(400).json({ ok: false, error: "username und score sind erforderlich" });
+  }
+
+  try {
+    await saveScore(String(username).trim(), Number(score));
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("save-score Fehler:", error.message);
+    res.status(500).json({ ok: false, error: "score konnte nicht gespeichert werden" });
+  }
+});
+
+// LEADERBOARD LADEN (SUPABASE)
+app.get("/leaderboard", async (_req, res) => {
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const data = await getLeaderboard();
+    res.json(data || []);
+  } catch (error) {
+    console.error("leaderboard Fehler:", error.message);
+    res.status(500).json({ ok: false, error: "leaderboard konnte nicht geladen werden" });
+  }
   res.json({
     ok: true,
     input: query,
@@ -312,6 +489,15 @@ io.on("connection", (socket) => {
   });
 
   // SUSPECT PLAYERS (seltene/godly discovery Muster)
+  socket.on("admin:getSuspectPlayers", async () => {
+    try {
+      const words = await getAllWordsMap();
+      const suspects = calculateSuspectPlayers(words);
+      socket.emit("admin:suspectPlayers", suspects);
+    } catch (error) {
+      console.error("getSuspectPlayers Fehler:", error.message);
+      socket.emit("admin:suspectPlayers", []);
+    }
   socket.on("admin:getSuspectPlayers", () => {
     const words = loadWords();
     const suspects = calculateSuspectPlayers(words);
