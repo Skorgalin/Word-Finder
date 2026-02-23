@@ -378,6 +378,16 @@ function submitItem(){
       document.getElementById("foundItems").prepend(div);
     }
 
+
+      const div = document.createElement("div");
+      div.className="foundItem";
+      div.innerHTML =
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]"+
+        (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+
+      document.getElementById("foundItems").prepend(div);
+    }
+
     // Notification bei jedem erfolgreichen Submit anzeigen.
     showItemNotification(d.input, d.output, d.rarity, d.firstDiscovery);
     document.getElementById("word").value="";
