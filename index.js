@@ -407,6 +407,12 @@ app.get("/leaderboard", async (_req, res) => {
     console.error("leaderboard Fehler:", error.message);
     res.status(500).json({ ok: false, error: "leaderboard konnte nicht geladen werden" });
   }
+  res.json({
+    ok: true,
+    input: query,
+    output: words[query].output,
+    rarity: words[query].rarity || "common"
+  });
 });
 
 /* ================= SOCKET.IO ================= */
@@ -492,6 +498,10 @@ io.on("connection", (socket) => {
       console.error("getSuspectPlayers Fehler:", error.message);
       socket.emit("admin:suspectPlayers", []);
     }
+  socket.on("admin:getSuspectPlayers", () => {
+    const words = loadWords();
+    const suspects = calculateSuspectPlayers(words);
+    socket.emit("admin:suspectPlayers", suspects);
   });
 
   // BAN PLAYER
