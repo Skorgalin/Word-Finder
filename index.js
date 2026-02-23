@@ -65,6 +65,15 @@ function ensureSupabase(res) {
   return false;
 }
 
+function ensurePersistentStore(res) {
+  if (supabase) return true;
+  res.status(503).json({
+    ok: false,
+    error: "Persistenz benötigt Supabase. Bitte SUPABASE_URL und SUPABASE_KEY setzen."
+  });
+  return false;
+}
+
 async function saveScore(username, score) {
   const { error } = await supabase.from("scores").insert([{ username, score }]);
   if (error) throw error;
@@ -267,6 +276,7 @@ function calculateSuspectPlayers(words) {
 
 // CHECK EMAIL
 app.post("/checkEmail", async (req, res) => {
+  if (!ensurePersistentStore(res)) return;
   const { email } = req.body;
   try {
     const user = await getUserByEmail(email);
@@ -279,6 +289,7 @@ app.post("/checkEmail", async (req, res) => {
 
 // REGISTER
 app.post("/register", async (req, res) => {
+  if (!ensurePersistentStore(res)) return;
   const { email, password } = req.body;
 
   try {
@@ -286,10 +297,10 @@ app.post("/register", async (req, res) => {
     if (existingUser) return res.json({ ok: false, error: "exists" });
 
     const hash = await bcrypt.hash(password, 10);
-    const admin = email === "till.behner@icloud.com";
-    await createUser(email, hash, admin);
+    const owner = email === OWNER_EMAIL;
+    await createUser(email, hash, owner);
 
-    res.json({ ok: true, admin });
+    res.json({ ok: true, owner });
   } catch (error) {
     console.error("register Fehler:", error.message);
     res.status(500).json({ ok: false, error: "server" });
@@ -298,6 +309,7 @@ app.post("/register", async (req, res) => {
 
 // LOGIN
 app.post("/login", async (req, res) => {
+  if (!ensurePersistentStore(res)) return;
   const { email, password } = req.body;
 
   try {
@@ -318,6 +330,7 @@ app.post("/login", async (req, res) => {
 
 // WORD SUBMIT + FIRST DISCOVERY
 app.post("/submitItem", async (req, res) => {
+  if (!ensurePersistentStore(res)) return;
   const { email, input } = req.body;
   const normalizedInput = String(input || "").trim();
   if (!normalizedInput) return res.json({ ok: false });
@@ -360,6 +373,7 @@ app.post("/submitItem", async (req, res) => {
 
 // OWNER SEARCH
 async function handleOwnerSearch(req, res) {
+  if (!ensurePersistentStore(res)) return;
   const { query } = req.body;
 
   try {
@@ -494,18 +508,6 @@ io.on("connection", (socket) => {
     } catch (error) {
       console.error("getSuspectPlayers Fehler:", error.message);
       socket.emit("owner:suspectPlayers", []);
-    }
-  });
-
-  // SUSPECT PLAYERS (seltene/godly discovery Muster)
-  socket.on("admin:getSuspectPlayers", async () => {
-    try {
-      const words = await getAllWordsMap();
-      const suspects = calculateSuspectPlayers(words);
-      socket.emit("admin:suspectPlayers", suspects);
-    } catch (error) {
-      console.error("getSuspectPlayers Fehler:", error.message);
-      socket.emit("admin:suspectPlayers", []);
     }
   });
 
