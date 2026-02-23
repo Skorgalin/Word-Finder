@@ -98,7 +98,7 @@ input,button{
 
 <!-- GAME -->
 <div id="game" style="display:none;">
-  <input id="word" name="gameWord" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Wort eingeben">
+  <input id="word" name="gameWord" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" placeholder="Wort eingeben">
   <button onclick="submitItem()">OK</button>
 
   <button onclick="toggleFound()">Found Items</button>
@@ -112,12 +112,12 @@ input,button{
     <h3>Owner Dashboard</h3>
 
     <div id="ownerAnnouncementSection">
-      <input id="announceText" placeholder="Ankündigung">
+      <input id="announceText" type="text" autocomplete="off" placeholder="Ankündigung">
       <button onclick="sendAnnouncement()">Senden</button>
       <hr>
     </div>
 
-    <input id="ownerSearchInput" placeholder="Input">
+    <input id="ownerSearchInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Input">
     <button onclick="ownerSearch()">OK</button>
     <div id="ownerSearchResult"></div>
 
@@ -132,7 +132,7 @@ input,button{
 
     <div id="ownerOnlyPanel">
       <h4>Admin ernennen</h4>
-      <input id="grantAdminEmail" placeholder="E-Mail für Admin Rechte">
+      <input id="grantAdminEmail" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="E-Mail für Admin Rechte">
       <button onclick="grantAdmin()">Admin ernennen</button>
       <div id="grantAdminResult"></div>
       <hr>
@@ -162,7 +162,7 @@ input,button{
 /* =================================================
    BASIS
    ================================================= */
-const socket = io();
+const socket = window.playerSocket || io();
 
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
@@ -317,6 +317,7 @@ function enterGame(owner, admin){
   }
 
   initPlayer(email,{ owner: isOwner, admin: isAdmin });
+  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin });
 
   emailInput.value="";
   passwordInput.value="";
@@ -326,6 +327,7 @@ function enterGame(owner, admin){
    LOGOUT
    ================================================= */
 function logout(){
+  socket.emit("owner:spectateStop");
   socket.emit("player:offline",{ email });
   location.reload();
 }

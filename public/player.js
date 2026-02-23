@@ -4,7 +4,8 @@
    - Spectate / Owner Funktionen
    ===================================================== */
 
-const playerSocket = io();
+window.playerSocket = window.playerSocket || io();
+const playerSocket = window.playerSocket;
 
 /* ================= SPIELER STATUS ================= */
 let currentPlayerEmail = "";
