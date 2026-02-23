@@ -73,8 +73,8 @@ input,button{
 
 <!-- LOGIN -->
 <div id="login">
-  <input id="email" type="email" placeholder="E-Mail" required>
-  <input id="password" type="password" placeholder="Passwort" required>
+  <input id="email" name="email" type="email" autocomplete="email" placeholder="E-Mail" required>
+  <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required>
 
   <button id="registerBtn">Registrieren</button>
   <button id="loginBtn" style="display:none;">Login</button>
@@ -82,7 +82,7 @@ input,button{
 
 <!-- GAME -->
 <div id="game" style="display:none;">
-  <input id="word" placeholder="Wort eingeben">
+  <input id="word" name="gameWord" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Wort eingeben">
   <button onclick="submitItem()">OK</button>
 
   <button onclick="toggleFound()">Found Items</button>
@@ -108,6 +108,15 @@ input,button{
 
     <button onclick="loadPlayers()">Spieler verwalten</button>
     <div id="playersList"></div>
+
+    <hr>
+
+    <div id="spectatePanel" style="display:none; border:1px solid #555; padding:8px; margin-top:8px;">
+      <h4 id="spectateTitle">Spectate</h4>
+      <div><strong>Live Input:</strong> <span id="spectateTyping">-</span></div>
+      <div><strong>Letzter Fund:</strong> <span id="spectateFound">-</span></div>
+      <button onclick="stopSpectate()">Spectate stoppen</button>
+    </div>
   </div>
 </div>
 
@@ -131,7 +140,7 @@ let email = "";
 let isAdmin = false;
 let adminUnlocked = false;
 
-const foundSet = new Set(); // NEU: Für Found Items ohne Duplikate
+const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
 /* =================================================
    EMAIL CHECK
@@ -154,45 +163,106 @@ emailInput.addEventListener("input", ()=>{
 /* =================================================
    REGISTER
    ================================================= */
-registerBtn.onclick = ()=>{
-  fetch("/register",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
-    } else {
-      alert("Registrierung fehlgeschlagen");
+function setAuthButtonsDisabled(disabled){
+  registerBtn.disabled = disabled;
+  loginBtn.disabled = disabled;
+}
+
+registerBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const registerResponse = await fetch("/register",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const registerData = await registerResponse.json();
+
+    if(registerData.ok){
+      enterGame(registerData.admin);
+      return;
     }
-  });
+
+    // Falls der User bereits existiert, direkt als Login versuchen,
+    // damit der Registrieren-Button ebenfalls ins Spiel führt.
+    if(registerData.error === "exists"){
+      const loginResponse = await fetch("/login",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          email: enteredEmail,
+          password: enteredPassword
+        })
+      });
+
+      const loginData = await loginResponse.json();
+      if(loginData.ok){
+        enterGame(loginData.admin);
+      } else {
+        alert("Account existiert bereits. Bitte korrekt einloggen.");
+      }
+      return;
+    }
+
+    alert("Registrierung fehlgeschlagen");
+  } catch (error) {
+    console.error("Register/Login-Flow Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
    LOGIN
    ================================================= */
-loginBtn.onclick = ()=>{
-  fetch("/login",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
+loginBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const response = await fetch("/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const data = await response.json();
+
+    if(data.ok){
+      enterGame(data.admin);
     } else {
       alert("Falsches Passwort");
     }
-  });
+  } catch (error) {
+    console.error("Login Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
@@ -227,6 +297,14 @@ function logout(){
 /* =================================================
    WORD FINDER
    ================================================= */
+function showItemNotification(input, output, firstDiscovery){
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = `${input} → ${output}${firstDiscovery ? " (First Discovery)" : ""}`;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+}
+
 function submitItem(){
   const input = document.getElementById("word").value.trim();
   if(!input) return;
@@ -241,18 +319,25 @@ function submitItem(){
     if(!d.ok) return;
 
     const key = d.input + "->" + d.output;
-    if(foundSet.has(key)) return; // NEU: kein Duplikat
-    foundSet.add(key);
 
-    notifyItemFound(d.input, d.output);
+    // Spieler darf denselben Input mehrfach eingeben.
+    // Found Items bleibt trotzdem einzigartig pro input->output.
+    if(!gameFoundSet.has(key)){
+      gameFoundSet.add(key);
 
-    const div = document.createElement("div");
-    div.className="foundItem";
-    div.innerHTML =
-      d.input+" → "+d.output+
-      (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+      notifyItemFound(d.input, d.output);
 
-    document.getElementById("foundItems").prepend(div);
+      const div = document.createElement("div");
+      div.className="foundItem";
+      div.innerHTML =
+        d.input+" → "+d.output+
+        (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+
+      document.getElementById("foundItems").prepend(div);
+    }
+
+    // Notification bei jedem erfolgreichen Submit anzeigen.
+    showItemNotification(d.input, d.output, d.firstDiscovery);
     document.getElementById("word").value="";
   });
 }
@@ -322,19 +407,108 @@ function adminSearch(){
 /* =================================================
    SPIELER VERWALTEN
    ================================================= */
+let currentSpectateEmail = "";
+
 function loadPlayers(){
+  if(!adminUnlocked) return;
   socket.emit("admin:getPlayers");
+}
+
+function openBanDialog(playerEmail){
+  if(!adminUnlocked) return;
+
+  const reason = prompt("Grund für Bann:", "Regelverstoß") || "";
+  if(!reason.trim()){
+    alert("Bitte einen Grund angeben.");
+    return;
+  }
+
+  const mode = prompt("Bann-Dauer wählen: day / hour / minute / permanent", "minute");
+  if(!mode) return;
+
+  const normalizedMode = mode.trim().toLowerCase();
+  let duration = null;
+
+  if(normalizedMode === "permanent"){
+    duration = null;
+  } else {
+    const amountStr = prompt("Wie viele Einheiten?", "10");
+    const amount = parseInt(amountStr,10);
+    if(!amount || amount < 1){
+      alert("Ungültige Anzahl.");
+      return;
+    }
+
+    if(normalizedMode === "day") duration = amount * 24 * 60 * 60;
+    else if(normalizedMode === "hour") duration = amount * 60 * 60;
+    else if(normalizedMode === "minute") duration = amount * 60;
+    else {
+      alert("Ungültige Dauer. Erlaubt: day / hour / minute / permanent");
+      return;
+    }
+  }
+
+  socket.emit("admin:banPlayer", { email: playerEmail, reason: reason.trim(), duration });
+}
+
+function startSpectate(playerEmail){
+  if(!adminUnlocked) return;
+  currentSpectateEmail = playerEmail;
+  socket.emit("admin:spectateStart", { email: playerEmail });
+
+  document.getElementById("spectatePanel").style.display = "block";
+  document.getElementById("spectateTitle").textContent = `Spectate: ${playerEmail}`;
+  document.getElementById("spectateTyping").textContent = "-";
+  document.getElementById("spectateFound").textContent = "-";
+}
+
+function stopSpectate(){
+  socket.emit("admin:spectateStop");
+  currentSpectateEmail = "";
+  document.getElementById("spectatePanel").style.display = "none";
 }
 
 socket.on("admin:playersList",(players)=>{
   const list=document.getElementById("playersList");
   list.innerHTML="";
+
+  if(!players.length){
+    list.textContent = "Keine Spieler online.";
+    return;
+  }
+
   players.forEach(p=>{
-    const div=document.createElement("div");
-    div.textContent=p.email;
-    div.onclick=()=>alert("Spieler: "+p.email);
-    list.appendChild(div);
+    const row=document.createElement("div");
+    row.style.border = "1px solid #555";
+    row.style.padding = "6px";
+    row.style.marginBottom = "6px";
+
+    const label=document.createElement("div");
+    label.textContent=p.email;
+
+    const spectateBtn=document.createElement("button");
+    spectateBtn.textContent="Spectate";
+    spectateBtn.onclick=()=>startSpectate(p.email);
+
+    const banBtn=document.createElement("button");
+    banBtn.textContent="Bannen";
+    banBtn.onclick=()=>openBanDialog(p.email);
+
+    row.appendChild(label);
+    row.appendChild(spectateBtn);
+    row.appendChild(banBtn);
+    list.appendChild(row);
   });
+});
+
+socket.on("spectate:typing",({ email: typingEmail, text })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== typingEmail) return;
+  document.getElementById("spectateTyping").textContent = text || "(leer)";
+});
+
+socket.on("spectate:itemFound",({ email: foundEmail, input, output })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== foundEmail) return;
+  document.getElementById("spectateFound").textContent = `${input} → ${output}`;
 });
 
 /* =================================================

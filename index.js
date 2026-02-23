@@ -42,12 +42,33 @@ function saveWords(words) {
 }
 
 /* ================= RANDOM OUTPUT ================= */
-function makeOutput(input) {
+function makeOutput(inputLength) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let output = "";
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; i < inputLength; i++) {
     output += chars[Math.floor(Math.random() * chars.length)];
   }
+  return output;
+}
+
+function getExistingOutputMap(words) {
+  const outputToInput = {};
+  for (const inputKey in words) {
+    const existingOutput = words[inputKey]?.output;
+    if (existingOutput) outputToInput[existingOutput] = inputKey;
+  }
+  return outputToInput;
+}
+
+function makeUniqueOutputForInput(input, words) {
+  const outputToInput = getExistingOutputMap(words);
+  let output = makeOutput(input.length);
+
+  // Kollisionen vermeiden: ein Output darf nur zu genau einem Input gehören.
+  while (outputToInput[output] && outputToInput[output] !== input) {
+    output = makeOutput(input.length);
+  }
+
   return output;
 }
 
@@ -96,26 +117,35 @@ app.post("/login", async (req, res) => {
 // WORD SUBMIT + FIRST DISCOVERY
 app.post("/submitItem", (req, res) => {
   const { email, input } = req.body;
-  if (!input) return res.json({ ok: false });
+  const normalizedInput = String(input || "").trim();
+  if (!normalizedInput) return res.json({ ok: false });
 
   const words = loadWords();
-  const output = makeOutput(input);
-
   let firstDiscovery = false;
 
-  if (!words[input]) {
-    words[input] = {
-      output,
-      discoveredBy: email,
-      time: Date.now()
-    };
-    saveWords(words);
-    firstDiscovery = true;
+  // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
+  if (words[normalizedInput]) {
+    return res.json({
+      ok: true,
+      input: normalizedInput,
+      output: words[normalizedInput].output,
+      firstDiscovery
+    });
   }
+
+  const output = makeUniqueOutputForInput(normalizedInput, words);
+
+  words[normalizedInput] = {
+    output,
+    discoveredBy: email,
+    time: Date.now()
+  };
+  saveWords(words);
+  firstDiscovery = true;
 
   res.json({
     ok: true,
-    input,
+    input: normalizedInput,
     output,
     firstDiscovery
   });
@@ -141,12 +171,20 @@ io.on("connection", (socket) => {
   /* PLAYER ONLINE */
   socket.on("player:online", ({ email }) => {
     const ban = bannedPlayers[email];
-    if (ban && Date.now() < ban.until) {
-      socket.emit("player:banned", {
-        reason: ban.reason,
-        remaining: Math.ceil((ban.until - Date.now()) / 1000)
-      });
-      return;
+    if (ban) {
+      const isPermanent = ban.until === null;
+      const stillBanned = isPermanent || Date.now() < ban.until;
+
+      if (stillBanned) {
+        socket.emit("player:banned", {
+          reason: ban.reason,
+          remaining: isPermanent ? null : Math.ceil((ban.until - Date.now()) / 1000),
+          permanent: isPermanent
+        });
+        return;
+      }
+
+      delete bannedPlayers[email];
     }
 
     onlinePlayers[email] = socket.id;
@@ -202,16 +240,18 @@ io.on("connection", (socket) => {
 
   // BAN PLAYER
   socket.on("admin:banPlayer", ({ email, reason, duration }) => {
+    const permanent = duration === null || duration === undefined;
     bannedPlayers[email] = {
       reason,
-      until: Date.now() + duration * 1000
+      until: permanent ? null : Date.now() + duration * 1000
     };
 
     const target = onlinePlayers[email];
     if (target) {
       io.to(target).emit("player:banned", {
         reason,
-        remaining: duration
+        remaining: permanent ? null : duration,
+        permanent
       });
       io.sockets.sockets.get(target)?.disconnect(true);
       delete onlinePlayers[email];
