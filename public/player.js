@@ -65,7 +65,7 @@ playerSocket.on("player:banned", (data) => {
   overlay.innerHTML = `
     <h1>Du wurdest gebannt!</h1>
     <p>Grund: ${data.reason}</p>
-    <p>Dauer: ${data.remaining} Sekunden</p>
+    <p>Dauer: ${data.permanent ? "Permanent" : `${data.remaining} Sekunden`}</p>
   `;
   document.body.appendChild(overlay);
   if(wordInput) wordInput.disabled = true;

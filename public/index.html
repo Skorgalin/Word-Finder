@@ -108,6 +108,15 @@ input,button{
 
     <button onclick="loadPlayers()">Spieler verwalten</button>
     <div id="playersList"></div>
+
+    <hr>
+
+    <div id="spectatePanel" style="display:none; border:1px solid #555; padding:8px; margin-top:8px;">
+      <h4 id="spectateTitle">Spectate</h4>
+      <div><strong>Live Input:</strong> <span id="spectateTyping">-</span></div>
+      <div><strong>Letzter Fund:</strong> <span id="spectateFound">-</span></div>
+      <button onclick="stopSpectate()">Spectate stoppen</button>
+    </div>
   </div>
 </div>
 
@@ -398,19 +407,108 @@ function adminSearch(){
 /* =================================================
    SPIELER VERWALTEN
    ================================================= */
+let currentSpectateEmail = "";
+
 function loadPlayers(){
+  if(!adminUnlocked) return;
   socket.emit("admin:getPlayers");
+}
+
+function openBanDialog(playerEmail){
+  if(!adminUnlocked) return;
+
+  const reason = prompt("Grund für Bann:", "Regelverstoß") || "";
+  if(!reason.trim()){
+    alert("Bitte einen Grund angeben.");
+    return;
+  }
+
+  const mode = prompt("Bann-Dauer wählen: day / hour / minute / permanent", "minute");
+  if(!mode) return;
+
+  const normalizedMode = mode.trim().toLowerCase();
+  let duration = null;
+
+  if(normalizedMode === "permanent"){
+    duration = null;
+  } else {
+    const amountStr = prompt("Wie viele Einheiten?", "10");
+    const amount = parseInt(amountStr,10);
+    if(!amount || amount < 1){
+      alert("Ungültige Anzahl.");
+      return;
+    }
+
+    if(normalizedMode === "day") duration = amount * 24 * 60 * 60;
+    else if(normalizedMode === "hour") duration = amount * 60 * 60;
+    else if(normalizedMode === "minute") duration = amount * 60;
+    else {
+      alert("Ungültige Dauer. Erlaubt: day / hour / minute / permanent");
+      return;
+    }
+  }
+
+  socket.emit("admin:banPlayer", { email: playerEmail, reason: reason.trim(), duration });
+}
+
+function startSpectate(playerEmail){
+  if(!adminUnlocked) return;
+  currentSpectateEmail = playerEmail;
+  socket.emit("admin:spectateStart", { email: playerEmail });
+
+  document.getElementById("spectatePanel").style.display = "block";
+  document.getElementById("spectateTitle").textContent = `Spectate: ${playerEmail}`;
+  document.getElementById("spectateTyping").textContent = "-";
+  document.getElementById("spectateFound").textContent = "-";
+}
+
+function stopSpectate(){
+  socket.emit("admin:spectateStop");
+  currentSpectateEmail = "";
+  document.getElementById("spectatePanel").style.display = "none";
 }
 
 socket.on("admin:playersList",(players)=>{
   const list=document.getElementById("playersList");
   list.innerHTML="";
+
+  if(!players.length){
+    list.textContent = "Keine Spieler online.";
+    return;
+  }
+
   players.forEach(p=>{
-    const div=document.createElement("div");
-    div.textContent=p.email;
-    div.onclick=()=>alert("Spieler: "+p.email);
-    list.appendChild(div);
+    const row=document.createElement("div");
+    row.style.border = "1px solid #555";
+    row.style.padding = "6px";
+    row.style.marginBottom = "6px";
+
+    const label=document.createElement("div");
+    label.textContent=p.email;
+
+    const spectateBtn=document.createElement("button");
+    spectateBtn.textContent="Spectate";
+    spectateBtn.onclick=()=>startSpectate(p.email);
+
+    const banBtn=document.createElement("button");
+    banBtn.textContent="Bannen";
+    banBtn.onclick=()=>openBanDialog(p.email);
+
+    row.appendChild(label);
+    row.appendChild(spectateBtn);
+    row.appendChild(banBtn);
+    list.appendChild(row);
   });
+});
+
+socket.on("spectate:typing",({ email: typingEmail, text })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== typingEmail) return;
+  document.getElementById("spectateTyping").textContent = text || "(leer)";
+});
+
+socket.on("spectate:itemFound",({ email: foundEmail, input, output })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== foundEmail) return;
+  document.getElementById("spectateFound").textContent = `${input} → ${output}`;
 });
 
 /* =================================================

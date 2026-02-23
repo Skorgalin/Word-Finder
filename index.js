@@ -171,12 +171,20 @@ io.on("connection", (socket) => {
   /* PLAYER ONLINE */
   socket.on("player:online", ({ email }) => {
     const ban = bannedPlayers[email];
-    if (ban && Date.now() < ban.until) {
-      socket.emit("player:banned", {
-        reason: ban.reason,
-        remaining: Math.ceil((ban.until - Date.now()) / 1000)
-      });
-      return;
+    if (ban) {
+      const isPermanent = ban.until === null;
+      const stillBanned = isPermanent || Date.now() < ban.until;
+
+      if (stillBanned) {
+        socket.emit("player:banned", {
+          reason: ban.reason,
+          remaining: isPermanent ? null : Math.ceil((ban.until - Date.now()) / 1000),
+          permanent: isPermanent
+        });
+        return;
+      }
+
+      delete bannedPlayers[email];
     }
 
     onlinePlayers[email] = socket.id;
@@ -232,16 +240,18 @@ io.on("connection", (socket) => {
 
   // BAN PLAYER
   socket.on("admin:banPlayer", ({ email, reason, duration }) => {
+    const permanent = duration === null || duration === undefined;
     bannedPlayers[email] = {
       reason,
-      until: Date.now() + duration * 1000
+      until: permanent ? null : Date.now() + duration * 1000
     };
 
     const target = onlinePlayers[email];
     if (target) {
       io.to(target).emit("player:banned", {
         reason,
-        remaining: duration
+        remaining: permanent ? null : duration,
+        permanent
       });
       io.sockets.sockets.get(target)?.disconnect(true);
       delete onlinePlayers[email];
