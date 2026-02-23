@@ -42,13 +42,101 @@ function saveWords(words) {
 }
 
 /* ================= RANDOM OUTPUT ================= */
-function makeOutput(input) {
+const RARITY_LEVELS = [
+  { name: "common", weight: 60 },
+  { name: "selten", weight: 25 },
+  { name: "legendär", weight: 10 },
+  { name: "mythisch", weight: 4 },
+  { name: "godly", weight: 1 }
+];
+
+function pickRarity() {
+  const total = RARITY_LEVELS.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * total;
+
+  for (const rarity of RARITY_LEVELS) {
+    if (roll < rarity.weight) return rarity.name;
+    roll -= rarity.weight;
+  }
+
+  return "common";
+}
+
+function randomOutputLength() {
+  return 4 + Math.floor(Math.random() * 9); // 4..12
+}
+
+function makeOutput(length) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let output = "";
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; i < length; i++) {
     output += chars[Math.floor(Math.random() * chars.length)];
   }
   return output;
+}
+
+function getExistingOutputMap(words) {
+  const outputToInput = {};
+  for (const inputKey in words) {
+    const existingOutput = words[inputKey]?.output;
+    if (existingOutput) outputToInput[existingOutput] = inputKey;
+  }
+  return outputToInput;
+}
+
+function makeUniqueOutput(words) {
+  const outputToInput = getExistingOutputMap(words);
+  let output = makeOutput(randomOutputLength());
+
+  while (outputToInput[output]) {
+    output = makeOutput(randomOutputLength());
+  }
+
+  return output;
+}
+
+function calculateSuspectPlayers(words) {
+  const statsByPlayer = {};
+
+  for (const inputKey in words) {
+    const entry = words[inputKey] || {};
+    const playerEmail = entry.discoveredBy;
+    if (!playerEmail) continue;
+
+    if (!statsByPlayer[playerEmail]) {
+      statsByPlayer[playerEmail] = {
+        email: playerEmail,
+        totalDiscoveries: 0,
+        legendärCount: 0,
+        mythischCount: 0,
+        godlyCount: 0
+      };
+    }
+
+    const stats = statsByPlayer[playerEmail];
+    stats.totalDiscoveries += 1;
+
+    const rarity = entry.rarity || "common";
+    if (rarity === "legendär") stats.legendärCount += 1;
+    if (rarity === "mythisch") stats.mythischCount += 1;
+    if (rarity === "godly") stats.godlyCount += 1;
+  }
+
+  const suspects = Object.values(statsByPlayer)
+    .map((stats) => {
+      const rareCount = stats.legendärCount + stats.mythischCount + stats.godlyCount;
+      const score = stats.godlyCount * 8 + stats.mythischCount * 5 + stats.legendärCount * 3;
+      return {
+        ...stats,
+        rareCount,
+        score,
+        suspicious: stats.godlyCount > 0 || stats.mythischCount >= 2 || rareCount >= 4
+      };
+    })
+    .filter((stats) => stats.suspicious)
+    .sort((a, b) => b.score - a.score || b.rareCount - a.rareCount || b.totalDiscoveries - a.totalDiscoveries);
+
+  return suspects;
 }
 
 /* ================= AUTH ================= */
@@ -96,27 +184,41 @@ app.post("/login", async (req, res) => {
 // WORD SUBMIT + FIRST DISCOVERY
 app.post("/submitItem", (req, res) => {
   const { email, input } = req.body;
-  if (!input) return res.json({ ok: false });
+  const normalizedInput = String(input || "").trim();
+  if (!normalizedInput) return res.json({ ok: false });
 
   const words = loadWords();
-  const output = makeOutput(input);
-
   let firstDiscovery = false;
 
-  if (!words[input]) {
-    words[input] = {
-      output,
-      discoveredBy: email,
-      time: Date.now()
-    };
-    saveWords(words);
-    firstDiscovery = true;
+  // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
+  if (words[normalizedInput]) {
+    const existing = words[normalizedInput];
+    return res.json({
+      ok: true,
+      input: normalizedInput,
+      output: existing.output,
+      rarity: existing.rarity || "common",
+      firstDiscovery
+    });
   }
+
+  const output = makeUniqueOutput(words);
+  const rarity = pickRarity();
+
+  words[normalizedInput] = {
+    output,
+    rarity,
+    discoveredBy: email,
+    time: Date.now()
+  };
+  saveWords(words);
+  firstDiscovery = true;
 
   res.json({
     ok: true,
-    input,
+    input: normalizedInput,
     output,
+    rarity,
     firstDiscovery
   });
 });
@@ -131,7 +233,8 @@ app.post("/adminSearch", (req, res) => {
   res.json({
     ok: true,
     input: query,
-    output: words[query].output
+    output: words[query].output,
+    rarity: words[query].rarity || "common"
   });
 });
 
@@ -141,12 +244,20 @@ io.on("connection", (socket) => {
   /* PLAYER ONLINE */
   socket.on("player:online", ({ email }) => {
     const ban = bannedPlayers[email];
-    if (ban && Date.now() < ban.until) {
-      socket.emit("player:banned", {
-        reason: ban.reason,
-        remaining: Math.ceil((ban.until - Date.now()) / 1000)
-      });
-      return;
+    if (ban) {
+      const isPermanent = ban.until === null;
+      const stillBanned = isPermanent || Date.now() < ban.until;
+
+      if (stillBanned) {
+        socket.emit("player:banned", {
+          reason: ban.reason,
+          remaining: isPermanent ? null : Math.ceil((ban.until - Date.now()) / 1000),
+          permanent: isPermanent
+        });
+        return;
+      }
+
+      delete bannedPlayers[email];
     }
 
     onlinePlayers[email] = socket.id;
@@ -200,18 +311,27 @@ io.on("connection", (socket) => {
     socket.emit("admin:playersList", players);
   });
 
+  // SUSPECT PLAYERS (seltene/godly discovery Muster)
+  socket.on("admin:getSuspectPlayers", () => {
+    const words = loadWords();
+    const suspects = calculateSuspectPlayers(words);
+    socket.emit("admin:suspectPlayers", suspects);
+  });
+
   // BAN PLAYER
   socket.on("admin:banPlayer", ({ email, reason, duration }) => {
+    const permanent = duration === null || duration === undefined;
     bannedPlayers[email] = {
       reason,
-      until: Date.now() + duration * 1000
+      until: permanent ? null : Date.now() + duration * 1000
     };
 
     const target = onlinePlayers[email];
     if (target) {
       io.to(target).emit("player:banned", {
         reason,
-        remaining: duration
+        remaining: permanent ? null : duration,
+        permanent
       });
       io.sockets.sockets.get(target)?.disconnect(true);
       delete onlinePlayers[email];
