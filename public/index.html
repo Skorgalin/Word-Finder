@@ -34,7 +34,7 @@ input,button{
   font-size:18px;
   margin:5px;
 }
-#foundItems,#adminPanel{
+#foundItems,#ownerPanel{
   border:1px solid #444;
   padding:10px;
   margin-top:10px;
@@ -62,6 +62,22 @@ input,button{
 .first{
   color:#0f0;
 }
+
+#ownerBtn{
+  background:#b30000;
+  color:#fff;
+  border:1px solid #ff4d4d;
+}
+#ownerPanel{
+  background:#000;
+  border:2px solid #00ff66;
+}
+#ownerPanel input{
+  border:1px solid #00ff66;
+  background:#111;
+  color:#fff;
+}
+
 </style>
 </head>
 
@@ -73,8 +89,8 @@ input,button{
 
 <!-- LOGIN -->
 <div id="login">
-  <input id="email" type="email" placeholder="E-Mail" required>
-  <input id="password" type="password" placeholder="Passwort" required>
+  <input id="email" name="email" type="email" autocomplete="email" placeholder="E-Mail" required>
+  <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required>
 
   <button id="registerBtn">Registrieren</button>
   <button id="loginBtn" style="display:none;">Login</button>
@@ -82,32 +98,58 @@ input,button{
 
 <!-- GAME -->
 <div id="game" style="display:none;">
-  <input id="word" placeholder="Wort eingeben">
+  <input id="word" name="gameWord" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" placeholder="Wort eingeben">
   <button onclick="submitItem()">OK</button>
 
   <button onclick="toggleFound()">Found Items</button>
-  <button id="adminBtn" style="display:none;" onclick="askAdminPassword()">Admin</button>
+  <button id="ownerBtn" style="display:none;" onclick="askOwnerPassword()">Owner</button>
   <button onclick="logout()">Logout</button>
 
   <div id="foundItems"></div>
 
-  <!-- ADMIN PANEL -->
-  <div id="adminPanel">
-    <h3>Admin Dashboard</h3>
+  <!-- OWNER PANEL -->
+  <div id="ownerPanel">
+    <h3>Owner Dashboard</h3>
 
-    <input id="announceText" placeholder="Ankündigung">
-    <button onclick="sendAnnouncement()">Senden</button>
+    <div id="ownerAnnouncementSection">
+      <input id="announceText" type="text" autocomplete="off" placeholder="Ankündigung">
+      <button onclick="sendAnnouncement()">Senden</button>
+      <hr>
+    </div>
 
-    <hr>
-
-    <input id="adminSearchInput" placeholder="Input">
-    <button onclick="adminSearch()">OK</button>
-    <div id="adminSearchResult"></div>
+    <input id="ownerSearchInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Input">
+    <button onclick="ownerSearch()">OK</button>
+    <div id="ownerSearchResult"></div>
 
     <hr>
 
     <button onclick="loadPlayers()">Spieler verwalten</button>
+    <button onclick="loadSuspectPlayers()">Suspect Player</button>
     <div id="playersList"></div>
+    <div id="suspectPlayersList"></div>
+
+    <hr>
+
+    <div id="ownerOnlyPanel">
+      <h4>Admin ernennen</h4>
+      <input id="grantAdminEmail" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="E-Mail für Admin Rechte">
+      <button onclick="grantAdmin()">Admin ernennen</button>
+      <div id="grantAdminResult"></div>
+      <hr>
+    </div>
+
+    <h4>Gebannte Spieler</h4>
+    <button onclick="loadBannedPlayers()">Gebannte laden</button>
+    <div id="bannedPlayersList"></div>
+
+    <hr>
+
+    <div id="spectatePanel" style="display:none; border:1px solid #555; padding:8px; margin-top:8px;">
+      <h4 id="spectateTitle">Spectate</h4>
+      <div><strong>Live Input:</strong> <span id="spectateTyping">-</span></div>
+      <div><strong>Letzter Fund:</strong> <span id="spectateFound">-</span></div>
+      <button onclick="stopSpectate()">Spectate stoppen</button>
+    </div>
   </div>
 </div>
 
@@ -120,7 +162,7 @@ input,button{
 /* =================================================
    BASIS
    ================================================= */
-const socket = io();
+const socket = window.playerSocket || io();
 
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
@@ -128,10 +170,11 @@ const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 
 let email = "";
+let isOwner = false;
 let isAdmin = false;
-let adminUnlocked = false;
+let ownerUnlocked = false;
 
-const foundSet = new Set(); // NEU: Für Found Items ohne Duplikate
+const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
 /* =================================================
    EMAIL CHECK
@@ -154,63 +197,127 @@ emailInput.addEventListener("input", ()=>{
 /* =================================================
    REGISTER
    ================================================= */
-registerBtn.onclick = ()=>{
-  fetch("/register",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
-    } else {
-      alert("Registrierung fehlgeschlagen");
+function setAuthButtonsDisabled(disabled){
+  registerBtn.disabled = disabled;
+  loginBtn.disabled = disabled;
+}
+
+registerBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const registerResponse = await fetch("/register",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const registerData = await registerResponse.json();
+
+    if(registerData.ok){
+      enterGame(registerData.owner, registerData.admin);
+      return;
     }
-  });
+
+    // Falls der User bereits existiert, direkt als Login versuchen,
+    // damit der Registrieren-Button ebenfalls ins Spiel führt.
+    if(registerData.error === "exists"){
+      const loginResponse = await fetch("/login",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          email: enteredEmail,
+          password: enteredPassword
+        })
+      });
+
+      const loginData = await loginResponse.json();
+      if(loginData.ok){
+        enterGame(loginData.owner, loginData.admin);
+      } else {
+        alert("Account existiert bereits. Bitte korrekt einloggen.");
+      }
+      return;
+    }
+
+    alert(registerData.error || "Registrierung fehlgeschlagen");
+  } catch (error) {
+    console.error("Register/Login-Flow Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
    LOGIN
    ================================================= */
-loginBtn.onclick = ()=>{
-  fetch("/login",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      email: emailInput.value,
-      password: passwordInput.value
-    })
-  })
-  .then(r=>r.json())
-  .then(d=>{
-    if(d.ok){
-      enterGame(d.admin);
+loginBtn.onclick = async ()=>{
+  const enteredEmail = emailInput.value.trim();
+  const enteredPassword = passwordInput.value;
+
+  if(!enteredEmail || !enteredPassword){
+    alert("Bitte E-Mail und Passwort eingeben.");
+    return;
+  }
+
+  setAuthButtonsDisabled(true);
+
+  try {
+    const response = await fetch("/login",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        email: enteredEmail,
+        password: enteredPassword
+      })
+    });
+
+    const data = await response.json();
+
+    if(data.ok){
+      enterGame(data.owner, data.admin);
     } else {
-      alert("Falsches Passwort");
+      alert(data.error || "Falsches Passwort");
     }
-  });
+  } catch (error) {
+    console.error("Login Fehler:", error);
+    alert("Verbindungsfehler. Bitte erneut versuchen.");
+  } finally {
+    setAuthButtonsDisabled(false);
+  }
 };
 
 /* =================================================
    ENTER GAME
    ================================================= */
-function enterGame(admin){
+function enterGame(owner, admin){
   email = emailInput.value;
-  isAdmin = admin || email === "till.behner@icloud.com";
-  adminUnlocked = false;
+  const OWNER_EMAIL = "till.behner@icloud.com";
+  isOwner = owner || email === OWNER_EMAIL;
+  isAdmin = admin || isOwner;
+  ownerUnlocked = false;
 
   document.getElementById("login").style.display="none";
   document.getElementById("game").style.display="flex";
 
-  if(isAdmin){
-    document.getElementById("adminBtn").style.display="inline";
+  if(isOwner || isAdmin){
+    document.getElementById("ownerBtn").style.display="inline";
   }
 
-  initPlayer(email);
+  initPlayer(email,{ owner: isOwner, admin: isAdmin });
+  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin });
 
   emailInput.value="";
   passwordInput.value="";
@@ -220,6 +327,7 @@ function enterGame(admin){
    LOGOUT
    ================================================= */
 function logout(){
+  socket.emit("owner:spectateStop");
   socket.emit("player:offline",{ email });
   location.reload();
 }
@@ -227,6 +335,18 @@ function logout(){
 /* =================================================
    WORD FINDER
    ================================================= */
+function rarityLabel(rarity){
+  return (rarity || "common").toUpperCase();
+}
+
+function showItemNotification(input, output, rarity, firstDiscovery){
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = `${input} → ${output} [${rarityLabel(rarity)}]${firstDiscovery ? " (First Discovery)" : ""}`;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),5000);
+}
+
 function submitItem(){
   const input = document.getElementById("word").value.trim();
   if(!input) return;
@@ -241,18 +361,25 @@ function submitItem(){
     if(!d.ok) return;
 
     const key = d.input + "->" + d.output;
-    if(foundSet.has(key)) return; // NEU: kein Duplikat
-    foundSet.add(key);
 
-    notifyItemFound(d.input, d.output);
+    // Spieler darf denselben Input mehrfach eingeben.
+    // Found Items bleibt trotzdem einzigartig pro input->output.
+    if(!gameFoundSet.has(key)){
+      gameFoundSet.add(key);
 
-    const div = document.createElement("div");
-    div.className="foundItem";
-    div.innerHTML =
-      d.input+" → "+d.output+
-      (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+      notifyItemFound(d.input, d.output);
 
-    document.getElementById("foundItems").prepend(div);
+      const div = document.createElement("div");
+      div.className="foundItem";
+      div.innerHTML =
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]"+
+        (d.firstDiscovery ? " <span class='first'>(First Discovery)</span>" : "");
+
+      document.getElementById("foundItems").prepend(div);
+    }
+
+    // Notification bei jedem erfolgreichen Submit anzeigen.
+    showItemNotification(d.input, d.output, d.rarity, d.firstDiscovery);
     document.getElementById("word").value="";
   });
 }
@@ -263,19 +390,22 @@ function toggleFound(){
 }
 
 /* =================================================
-   ADMIN
+   OWNER
    ================================================= */
-function askAdminPassword(){
-  if(adminUnlocked){
-    adminPanel.style.display =
-      adminPanel.style.display==="none"?"block":"none";
+function askOwnerPassword(){
+  const panel = document.getElementById("ownerPanel");
+
+  if(ownerUnlocked){
+    panel.style.display = panel.style.display==="none"?"block":"none";
     return;
   }
 
-  const pw = prompt("Admin Passwort:");
+  const pw = prompt("Owner Passwort:");
   if(pw==="X9$QvR7!eM2#A8wK@C"){
-    adminUnlocked=true;
-    document.getElementById("adminPanel").style.display="block";
+    ownerUnlocked=true;
+    panel.style.display="block";
+    document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
+    document.getElementById("ownerAnnouncementSection").style.display = isOwner ? "block" : "none";
   } else {
     alert("Falsches Passwort");
   }
@@ -285,9 +415,9 @@ function askAdminPassword(){
    ANNOUNCEMENTS
    ================================================= */
 function sendAnnouncement(){
-  if(!adminUnlocked) return;
+  if(!ownerUnlocked || !isOwner) return;
   const text=document.getElementById("announceText").value;
-  socket.emit("adminAnnouncement",{text});
+  socket.emit("ownerAnnouncement",{text});
   document.getElementById("announceText").value="";
 }
 
@@ -300,12 +430,12 @@ socket.on("announcement",data=>{
 });
 
 /* =================================================
-   ADMIN SEARCH
+   OWNER SEARCH
    ================================================= */
-function adminSearch(){
-  const query=document.getElementById("adminSearchInput").value;
+function ownerSearch(){
+  const query=document.getElementById("ownerSearchInput").value;
 
-  fetch("/adminSearch",{
+  fetch("/ownerSearch",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ query })
@@ -313,8 +443,8 @@ function adminSearch(){
   .then(r=>r.json())
   .then(d=>{
     if(d.ok){
-      document.getElementById("adminSearchResult").textContent =
-        d.input+" → "+d.output;
+      document.getElementById("ownerSearchResult").textContent =
+        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]";
     }
   });
 }
@@ -322,19 +452,223 @@ function adminSearch(){
 /* =================================================
    SPIELER VERWALTEN
    ================================================= */
-function loadPlayers(){
-  socket.emit("admin:getPlayers");
+let currentSpectateEmail = "";
+
+function loadSuspectPlayers(){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:getSuspectPlayers");
 }
 
-socket.on("admin:playersList",(players)=>{
+function createPlayerActionRow(emailText, metaText){
+  const row=document.createElement("div");
+  row.style.border = "1px solid #555";
+  row.style.padding = "6px";
+  row.style.marginBottom = "6px";
+
+  const label=document.createElement("div");
+  label.textContent = emailText;
+
+  const meta=document.createElement("div");
+  meta.style.fontSize = "14px";
+  meta.style.opacity = "0.85";
+  meta.textContent = metaText;
+
+  const spectateBtn=document.createElement("button");
+  spectateBtn.textContent="Spectate";
+  spectateBtn.onclick=()=>startSpectate(emailText);
+
+  const banBtn=document.createElement("button");
+  banBtn.textContent="Bannen";
+  const protectedRole = String(metaText).toLowerCase().includes("owner") || String(metaText).toLowerCase().includes("admin");
+  if(protectedRole){
+    banBtn.disabled = true;
+  }
+  banBtn.onclick=()=>openBanDialog(emailText);
+
+  row.appendChild(label);
+  row.appendChild(meta);
+  row.appendChild(spectateBtn);
+  row.appendChild(banBtn);
+  return row;
+}
+
+function loadPlayers(){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:getPlayers");
+}
+
+function openBanDialog(playerEmail){
+  if(!ownerUnlocked) return;
+
+  const reason = prompt("Grund für Bann:", "Regelverstoß") || "";
+  if(!reason.trim()){
+    alert("Bitte einen Grund angeben.");
+    return;
+  }
+
+  const mode = prompt("Bann-Dauer wählen: day / hour / minute / permanent", "minute");
+  if(!mode) return;
+
+  const normalizedMode = mode.trim().toLowerCase();
+  let duration = null;
+
+  if(normalizedMode === "permanent"){
+    duration = null;
+  } else {
+    const amountStr = prompt("Wie viele Einheiten?", "10");
+    const amount = parseInt(amountStr,10);
+    if(!amount || amount < 1){
+      alert("Ungültige Anzahl.");
+      return;
+    }
+
+    if(normalizedMode === "day") duration = amount * 24 * 60 * 60;
+    else if(normalizedMode === "hour") duration = amount * 60 * 60;
+    else if(normalizedMode === "minute") duration = amount * 60;
+    else {
+      alert("Ungültige Dauer. Erlaubt: day / hour / minute / permanent");
+      return;
+    }
+  }
+
+  socket.emit("owner:banPlayer", { email: playerEmail, reason: reason.trim(), duration });
+}
+
+function startSpectate(playerEmail){
+  if(!ownerUnlocked) return;
+  currentSpectateEmail = playerEmail;
+  socket.emit("owner:spectateStart", { email: playerEmail });
+
+  document.getElementById("spectatePanel").style.display = "block";
+  document.getElementById("spectateTitle").textContent = `Spectate: ${playerEmail}`;
+  document.getElementById("spectateTyping").textContent = "-";
+  document.getElementById("spectateFound").textContent = "-";
+}
+
+function stopSpectate(){
+  socket.emit("owner:spectateStop");
+  currentSpectateEmail = "";
+  document.getElementById("spectatePanel").style.display = "none";
+}
+
+
+function grantAdmin(){
+  if(!ownerUnlocked || !isOwner) return;
+  const grantEmail = document.getElementById("grantAdminEmail").value.trim();
+  if(!grantEmail) return;
+  socket.emit("owner:grantAdmin", { email: grantEmail });
+}
+
+function loadBannedPlayers(){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:getBannedPlayers");
+}
+
+function unbanPlayer(playerEmail){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:unbanPlayer", { email: playerEmail });
+}
+
+socket.on("owner:grantAdminResult", (data)=>{
+  const box=document.getElementById("grantAdminResult");
+  box.textContent = data.ok
+    ? `${data.email} ist jetzt Admin.`
+    : `Fehler: ${data.error || "Unbekannt"}`;
+});
+
+socket.on("owner:banError", (data)=>{
+  alert(data.error || "Bann fehlgeschlagen");
+});
+
+socket.on("owner:banAudit", (data)=>{
+  if(!isOwner) return;
+  const latest = (data.recentActions || [])
+    .map(a => `${a.input} → ${a.output} [${a.rarity}]`)
+    .join(" | ");
+
+  const text = `Admin-Bann: ${data.by} bannte ${data.target}. Grund: ${data.reason}. Dauer: ${data.permanent ? "Permanent" : data.duration + "s"}. Letzte Inputs: ${latest || "-"}`;
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = text;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),10000);
+});
+
+socket.on("owner:bannedPlayers", (players)=>{
+  const list=document.getElementById("bannedPlayersList");
+  list.innerHTML = "";
+
+  if(!players.length){
+    list.textContent = "Niemand ist aktuell gebannt.";
+    return;
+  }
+
+  players.forEach(p=>{
+    const row=document.createElement("div");
+    row.style.border = "1px solid #555";
+    row.style.padding = "6px";
+    row.style.marginBottom = "6px";
+    row.textContent = `${p.email} | Grund: ${p.reason} | Dauer: ${p.permanent ? "Permanent" : `${p.remaining}s`}`;
+
+    const btn=document.createElement("button");
+    btn.textContent = "Entbannen";
+    btn.onclick = ()=>unbanPlayer(p.email);
+    row.appendChild(btn);
+
+    list.appendChild(row);
+  });
+});
+
+socket.on("owner:unbanResult", (data)=>{
+  if(data.ok){
+    loadBannedPlayers();
+  } else {
+    alert(data.error || "Entbannen fehlgeschlagen");
+  }
+});
+
+socket.on("owner:playersList",(players)=>{
   const list=document.getElementById("playersList");
   list.innerHTML="";
+
+  if(!players.length){
+    list.textContent = "Keine Spieler online.";
+    return;
+  }
+
   players.forEach(p=>{
-    const div=document.createElement("div");
-    div.textContent=p.email;
-    div.onclick=()=>alert("Spieler: "+p.email);
-    list.appendChild(div);
+    const roleText = p.owner ? "Owner" : (p.admin ? "Admin" : "Spieler");
+    list.appendChild(createPlayerActionRow(p.email, roleText));
   });
+});
+
+socket.on("owner:suspectPlayers",(suspects)=>{
+  const list=document.getElementById("suspectPlayersList");
+  list.innerHTML = "";
+
+  if(!suspects.length){
+    list.textContent = "Keine verdächtigen Spieler gefunden.";
+    return;
+  }
+
+  const title=document.createElement("h4");
+  title.textContent = "Suspect Player";
+  list.appendChild(title);
+
+  suspects.forEach(player=>{
+    const meta = `Rare: ${player.rareCount} | Leg: ${player.legendärCount} | Myth: ${player.mythischCount} | Godly: ${player.godlyCount} | Score: ${player.score}`;
+    list.appendChild(createPlayerActionRow(player.email, meta));
+  });
+});
+
+socket.on("spectate:typing",({ email: typingEmail, text })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== typingEmail) return;
+  document.getElementById("spectateTyping").textContent = text || "(leer)";
+});
+
+socket.on("spectate:itemFound",({ email: foundEmail, input, output })=>{
+  if(!currentSpectateEmail || currentSpectateEmail !== foundEmail) return;
+  document.getElementById("spectateFound").textContent = `${input} → ${output}`;
 });
 
 /* =================================================

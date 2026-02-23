@@ -1,10 +1,11 @@
 /* =====================================================
    PLAYER.JS
    - Spielerstatus & Live Typing
-   - Spectate / Admin Funktionen
+   - Spectate / Owner Funktionen
    ===================================================== */
 
-const playerSocket = io();
+window.playerSocket = window.playerSocket || io();
+const playerSocket = window.playerSocket;
 
 /* ================= SPIELER STATUS ================= */
 let currentPlayerEmail = "";
@@ -14,11 +15,13 @@ let isSpectating = false;
 const foundSet = new Set(); // NEU: für keine Duplikate in Found Items
 
 /* Wird von index.html beim Login aufgerufen */
-function initPlayer(email) {
+function initPlayer(email, role = {}) {
   currentPlayerEmail = email;
 
   playerSocket.emit("player:online", {
-    email: currentPlayerEmail
+    email: currentPlayerEmail,
+    owner: !!role.owner,
+    admin: !!role.admin
   });
 }
 
@@ -36,7 +39,7 @@ if (wordInput) {
 /* ================= ITEM GEFUNDEN ================= */
 function notifyItemFound(input, output) {
   const key = input + "->" + output;
-  if (foundSet.has(key)) return; // Schon angezeigt, nichts tun
+  if (foundSet.has(key)) return; // Schon gemeldet, nichts tun
   foundSet.add(key);
 
   playerSocket.emit("player:itemFound", {
@@ -44,12 +47,6 @@ function notifyItemFound(input, output) {
     input,
     output
   });
-
-  const div = document.createElement("div");
-  div.className = "foundItem";
-  div.innerHTML = input + " → " + output;
-  const foundContainer = document.getElementById("foundItems");
-  if (foundContainer) foundContainer.prepend(div);
 }
 
 /* ================= BAN / OFFLINE ================= */
@@ -71,7 +68,7 @@ playerSocket.on("player:banned", (data) => {
   overlay.innerHTML = `
     <h1>Du wurdest gebannt!</h1>
     <p>Grund: ${data.reason}</p>
-    <p>Dauer: ${data.remaining} Sekunden</p>
+    <p>Dauer: ${data.permanent ? "Permanent" : `${data.remaining} Sekunden`}</p>
   `;
   document.body.appendChild(overlay);
   if(wordInput) wordInput.disabled = true;
@@ -80,53 +77,16 @@ playerSocket.on("player:banned", (data) => {
 /* ================= SPECTATE ================= */
 playerSocket.on("spectate:start", (data) => {
   isSpectating = true;
-  alert("Admin beobachtet dich jetzt (Spectate aktiv).");
+  alert("Owner beobachtet dich jetzt (Spectate aktiv).");
 });
 
 playerSocket.on("spectate:stop", () => {
   isSpectating = false;
-  alert("Admin hat Spectate beendet.");
+  alert("Owner hat Spectate beendet.");
 });
 
-/* ================= ADMIN EVENTS ================= */
-
-/* Admin: Spielerliste empfangen */
-playerSocket.on("admin:playersList", (players) => {
-  const panel = document.getElementById("playersList");
-  if (!panel) return;
-  panel.innerHTML = "";
-  players.forEach(p => {
-    const div = document.createElement("div");
-    div.style.border = "1px solid #555";
-    div.style.padding = "5px";
-    div.style.margin = "3px";
-    div.textContent = `${p.email} | Online: ${p.online || "Ja"} | Banned: ${p.banned ? p.banned.reason : "Nein"}`;
-    
-    // Buttons für Spectate / Ban
-    const spectateBtn = document.createElement("button");
-    spectateBtn.textContent = "Spectate";
-    spectateBtn.onclick = () => {
-      playerSocket.emit("admin:spectateStart", { email: p.email });
-    };
-    const banBtn = document.createElement("button");
-    banBtn.textContent = "Bannen";
-    banBtn.onclick = () => {
-      const reason = prompt("Grund für Ban:");
-      const duration = parseInt(prompt("Dauer in Sekunden:"));
-      if (!reason || !duration) return;
-      playerSocket.emit("admin:banPlayer", { email: p.email, reason, duration });
-    };
-    div.appendChild(spectateBtn);
-    div.appendChild(banBtn);
-
-    panel.appendChild(div);
-  });
-});
-
-/* Admin: Bann erfolgreich */
-playerSocket.on("admin:banSuccess", (data) => {
-  alert(`${data.email} wurde gebannt.`);
-});
+/* ================= OWNER EVENTS ================= */
+// Owner-Panel-Events werden zentral in index.html gehandhabt.
 
 /* ================= OFFLINE ================= */
 window.addEventListener("beforeunload", () => {
