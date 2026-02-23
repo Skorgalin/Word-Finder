@@ -90,25 +90,36 @@ async function getLeaderboard() {
     .limit(10);
 
   if (error) throw error;
-  if (!data) return null;
-  return { ...data, owner: data.email === OWNER_EMAIL, admin: !!data.admin };
+  return data || [];
 }
 
 
 async function getUserByEmail(email) {
   if (!supabase) {
     const users = loadUsers();
-    return users[email] ? { email, ...users[email] } : null;
+    return users[email] ? normalizeUserRole({ email, ...users[email] }, email) : null;
   }
 
-  const { data, error } = await supabase
+  let data = null;
+  let error = null;
+
+  ({ data, error } = await supabase
     .from("users")
     .select("email,password,admin")
     .eq("email", email)
-    .maybeSingle();
+    .maybeSingle());
+
+  // Fallback für ältere Schema-Variante mit owner-Spalte statt admin.
+  if (error && String(error.message || "").toLowerCase().includes("column") && String(error.message || "").includes("admin")) {
+    ({ data, error } = await supabase
+      .from("users")
+      .select("email,password,owner")
+      .eq("email", email)
+      .maybeSingle());
+  }
 
   if (error) throw error;
-  return data;
+  return normalizeUserRole(data, email);
 }
 
 async function createUser(email, passwordHash) {
@@ -119,11 +130,18 @@ async function createUser(email, passwordHash) {
     return;
   }
 
-  const { error } = await supabase
+  let result = await supabase
     .from("users")
     .insert([{ email, password: passwordHash, admin: email === OWNER_EMAIL }]);
 
-  if (error) throw error;
+  if (result.error && String(result.error.message || "").toLowerCase().includes("column") && String(result.error.message || "").includes("admin")) {
+    // Fallback für ältere Schema-Variante mit owner-Spalte.
+    result = await supabase
+      .from("users")
+      .insert([{ email, password: passwordHash, owner: email === OWNER_EMAIL }]);
+  }
+
+  if (result.error) throw result.error;
 }
 
 
@@ -136,15 +154,24 @@ async function setUserAdmin(email, admin) {
     return true;
   }
 
-  const { data, error } = await supabase
+  let query = await supabase
     .from("users")
     .update({ admin: !!admin })
     .eq("email", email)
     .select("email")
     .maybeSingle();
 
-  if (error) throw error;
-  return !!data;
+  if (query.error && String(query.error.message || "").toLowerCase().includes("column") && String(query.error.message || "").includes("admin")) {
+    query = await supabase
+      .from("users")
+      .update({ owner: !!admin })
+      .eq("email", email)
+      .select("email")
+      .maybeSingle();
+  }
+
+  if (query.error) throw query.error;
+  return !!query.data;
 }
 
 function canModerate(role) {
@@ -209,6 +236,20 @@ async function createWordMapping(input, output, rarity, discoveredBy, discovered
     .insert([{ input, output, rarity, discovered_by: discoveredBy, discovered_at: discoveredAt }]);
 
   if (error) throw error;
+}
+
+
+function normalizeUserRole(user, emailFallback = "") {
+  if (!user) return null;
+  const email = user.email || emailFallback;
+  const isOwner = email === OWNER_EMAIL;
+  const isAdmin = !!(user.admin || user.owner) || isOwner;
+  return {
+    ...user,
+    email,
+    owner: isOwner,
+    admin: isAdmin
+  };
 }
 
 /* ================= RANDOM OUTPUT ================= */

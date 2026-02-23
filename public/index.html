@@ -251,7 +251,7 @@ registerBtn.onclick = async ()=>{
       return;
     }
 
-    alert("Registrierung fehlgeschlagen");
+    alert(registerData.error || "Registrierung fehlgeschlagen");
   } catch (error) {
     console.error("Register/Login-Flow Fehler:", error);
     alert("Verbindungsfehler. Bitte erneut versuchen.");
@@ -289,7 +289,7 @@ loginBtn.onclick = async ()=>{
     if(data.ok){
       enterGame(data.owner, data.admin);
     } else {
-      alert("Falsches Passwort");
+      alert(data.error || "Falsches Passwort");
     }
   } catch (error) {
     console.error("Login Fehler:", error);
@@ -312,7 +312,7 @@ function enterGame(owner, admin){
   document.getElementById("login").style.display="none";
   document.getElementById("game").style.display="flex";
 
-  if(isOwner){
+  if(isOwner || isAdmin){
     document.getElementById("ownerBtn").style.display="inline";
   }
 
