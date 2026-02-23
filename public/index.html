@@ -111,10 +111,11 @@ input,button{
   <div id="ownerPanel">
     <h3>Owner Dashboard</h3>
 
-    <input id="announceText" placeholder="Ankündigung">
-    <button onclick="sendAnnouncement()">Senden</button>
-
-    <hr>
+    <div id="ownerAnnouncementSection">
+      <input id="announceText" placeholder="Ankündigung">
+      <button onclick="sendAnnouncement()">Senden</button>
+      <hr>
+    </div>
 
     <input id="ownerSearchInput" placeholder="Input">
     <button onclick="ownerSearch()">OK</button>
@@ -126,6 +127,20 @@ input,button{
     <button onclick="loadSuspectPlayers()">Suspect Player</button>
     <div id="playersList"></div>
     <div id="suspectPlayersList"></div>
+
+    <hr>
+
+    <div id="ownerOnlyPanel">
+      <h4>Admin ernennen</h4>
+      <input id="grantAdminEmail" placeholder="E-Mail für Admin Rechte">
+      <button onclick="grantAdmin()">Admin ernennen</button>
+      <div id="grantAdminResult"></div>
+      <hr>
+    </div>
+
+    <h4>Gebannte Spieler</h4>
+    <button onclick="loadBannedPlayers()">Gebannte laden</button>
+    <div id="bannedPlayersList"></div>
 
     <hr>
 
@@ -156,6 +171,7 @@ const registerBtn = document.getElementById("registerBtn");
 
 let email = "";
 let isOwner = false;
+let isAdmin = false;
 let ownerUnlocked = false;
 
 const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
@@ -210,7 +226,7 @@ registerBtn.onclick = async ()=>{
     const registerData = await registerResponse.json();
 
     if(registerData.ok){
-      enterGame(registerData.owner);
+      enterGame(registerData.owner, registerData.admin);
       return;
     }
 
@@ -228,7 +244,7 @@ registerBtn.onclick = async ()=>{
 
       const loginData = await loginResponse.json();
       if(loginData.ok){
-        enterGame(loginData.owner);
+        enterGame(loginData.owner, loginData.admin);
       } else {
         alert("Account existiert bereits. Bitte korrekt einloggen.");
       }
@@ -271,7 +287,7 @@ loginBtn.onclick = async ()=>{
     const data = await response.json();
 
     if(data.ok){
-      enterGame(data.owner);
+      enterGame(data.owner, data.admin);
     } else {
       alert("Falsches Passwort");
     }
@@ -286,10 +302,11 @@ loginBtn.onclick = async ()=>{
 /* =================================================
    ENTER GAME
    ================================================= */
-function enterGame(owner){
+function enterGame(owner, admin){
   email = emailInput.value;
   const OWNER_EMAIL = "till.behner@icloud.com";
   isOwner = owner || email === OWNER_EMAIL;
+  isAdmin = admin || isOwner;
   ownerUnlocked = false;
 
   document.getElementById("login").style.display="none";
@@ -299,7 +316,7 @@ function enterGame(owner){
     document.getElementById("ownerBtn").style.display="inline";
   }
 
-  initPlayer(email);
+  initPlayer(email,{ owner: isOwner, admin: isAdmin });
 
   emailInput.value="";
   passwordInput.value="";
@@ -384,6 +401,8 @@ function askOwnerPassword(){
   if(pw==="X9$QvR7!eM2#A8wK@C"){
     ownerUnlocked=true;
     document.getElementById("ownerPanel").style.display="block";
+    document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
+    document.getElementById("ownerAnnouncementSection").style.display = isOwner ? "block" : "none";
   } else {
     alert("Falsches Passwort");
   }
@@ -393,7 +412,7 @@ function askOwnerPassword(){
    ANNOUNCEMENTS
    ================================================= */
 function sendAnnouncement(){
-  if(!ownerUnlocked) return;
+  if(!ownerUnlocked || !isOwner) return;
   const text=document.getElementById("announceText").value;
   socket.emit("ownerAnnouncement",{text});
   document.getElementById("announceText").value="";
@@ -433,7 +452,7 @@ function ownerSearch(){
 let currentSpectateEmail = "";
 
 function loadSuspectPlayers(){
-  if(!ownerUnlocked) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
   socket.emit("owner:getSuspectPlayers");
 }
 
@@ -457,6 +476,10 @@ function createPlayerActionRow(emailText, metaText){
 
   const banBtn=document.createElement("button");
   banBtn.textContent="Bannen";
+  const protectedRole = String(metaText).toLowerCase().includes("owner") || String(metaText).toLowerCase().includes("admin");
+  if(protectedRole){
+    banBtn.disabled = true;
+  }
   banBtn.onclick=()=>openBanDialog(emailText);
 
   row.appendChild(label);
@@ -467,7 +490,7 @@ function createPlayerActionRow(emailText, metaText){
 }
 
 function loadPlayers(){
-  if(!ownerUnlocked) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
   socket.emit("owner:getPlayers");
 }
 
@@ -525,6 +548,82 @@ function stopSpectate(){
   document.getElementById("spectatePanel").style.display = "none";
 }
 
+
+function grantAdmin(){
+  if(!ownerUnlocked || !isOwner) return;
+  const grantEmail = document.getElementById("grantAdminEmail").value.trim();
+  if(!grantEmail) return;
+  socket.emit("owner:grantAdmin", { email: grantEmail });
+}
+
+function loadBannedPlayers(){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:getBannedPlayers");
+}
+
+function unbanPlayer(playerEmail){
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  socket.emit("owner:unbanPlayer", { email: playerEmail });
+}
+
+socket.on("owner:grantAdminResult", (data)=>{
+  const box=document.getElementById("grantAdminResult");
+  box.textContent = data.ok
+    ? `${data.email} ist jetzt Admin.`
+    : `Fehler: ${data.error || "Unbekannt"}`;
+});
+
+socket.on("owner:banError", (data)=>{
+  alert(data.error || "Bann fehlgeschlagen");
+});
+
+socket.on("owner:banAudit", (data)=>{
+  if(!isOwner) return;
+  const latest = (data.recentActions || [])
+    .map(a => `${a.input} → ${a.output} [${a.rarity}]`)
+    .join(" | ");
+
+  const text = `Admin-Bann: ${data.by} bannte ${data.target}. Grund: ${data.reason}. Dauer: ${data.permanent ? "Permanent" : data.duration + "s"}. Letzte Inputs: ${latest || "-"}`;
+  const ann=document.createElement("div");
+  ann.className="announcement";
+  ann.textContent = text;
+  document.getElementById("announcements").appendChild(ann);
+  setTimeout(()=>ann.remove(),10000);
+});
+
+socket.on("owner:bannedPlayers", (players)=>{
+  const list=document.getElementById("bannedPlayersList");
+  list.innerHTML = "";
+
+  if(!players.length){
+    list.textContent = "Niemand ist aktuell gebannt.";
+    return;
+  }
+
+  players.forEach(p=>{
+    const row=document.createElement("div");
+    row.style.border = "1px solid #555";
+    row.style.padding = "6px";
+    row.style.marginBottom = "6px";
+    row.textContent = `${p.email} | Grund: ${p.reason} | Dauer: ${p.permanent ? "Permanent" : `${p.remaining}s`}`;
+
+    const btn=document.createElement("button");
+    btn.textContent = "Entbannen";
+    btn.onclick = ()=>unbanPlayer(p.email);
+    row.appendChild(btn);
+
+    list.appendChild(row);
+  });
+});
+
+socket.on("owner:unbanResult", (data)=>{
+  if(data.ok){
+    loadBannedPlayers();
+  } else {
+    alert(data.error || "Entbannen fehlgeschlagen");
+  }
+});
+
 socket.on("owner:playersList",(players)=>{
   const list=document.getElementById("playersList");
   list.innerHTML="";
@@ -535,7 +634,8 @@ socket.on("owner:playersList",(players)=>{
   }
 
   players.forEach(p=>{
-    list.appendChild(createPlayerActionRow(p.email, "Online"));
+    const roleText = p.owner ? "Owner" : (p.admin ? "Admin" : "Spieler");
+    list.appendChild(createPlayerActionRow(p.email, roleText));
   });
 });
 

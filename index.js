@@ -27,7 +27,10 @@ if (!fs.existsSync(WORDS_FILE)) fs.writeJsonSync(WORDS_FILE, {});
 /* ================= MEMORY ================= */
 const onlinePlayers = {};     // email -> socket.id
 const bannedPlayers = {};     // email -> { reason, until }
-const spectatingOwners = {};  // ownerSocketId -> playerEmail
+const spectatingOwners = {};  // privilegedSocketId -> playerEmail
+const socketRoles = {};        // socket.id -> { email, owner, admin }
+const ownerSockets = new Set();
+const playerRecentActions = {}; // email -> [{ input, output, rarity, time }]
 
 /* ================= HELPERS ================= */
 function loadUsers() {
@@ -87,7 +90,8 @@ async function getLeaderboard() {
     .limit(10);
 
   if (error) throw error;
-  return data;
+  if (!data) return null;
+  return { ...data, owner: data.email === OWNER_EMAIL, admin: !!data.admin };
 }
 
 
@@ -99,7 +103,7 @@ async function getUserByEmail(email) {
 
   const { data, error } = await supabase
     .from("users")
-    .select("email,password,owner")
+    .select("email,password,admin")
     .eq("email", email)
     .maybeSingle();
 
@@ -107,19 +111,52 @@ async function getUserByEmail(email) {
   return data;
 }
 
-async function createUser(email, passwordHash, owner) {
+async function createUser(email, passwordHash) {
   if (!supabase) {
     const users = loadUsers();
-    users[email] = { password: passwordHash, owner };
+    users[email] = { password: passwordHash, admin: email === OWNER_EMAIL };
     saveUsers(users);
     return;
   }
 
   const { error } = await supabase
     .from("users")
-    .insert([{ email, password: passwordHash, owner }]);
+    .insert([{ email, password: passwordHash, admin: email === OWNER_EMAIL }]);
 
   if (error) throw error;
+}
+
+
+async function setUserAdmin(email, admin) {
+  if (!supabase) {
+    const users = loadUsers();
+    if (!users[email]) return false;
+    users[email].admin = !!admin;
+    saveUsers(users);
+    return true;
+  }
+
+  const { data, error } = await supabase
+    .from("users")
+    .update({ admin: !!admin })
+    .eq("email", email)
+    .select("email")
+    .maybeSingle();
+
+  if (error) throw error;
+  return !!data;
+}
+
+function canModerate(role) {
+  return !!(role && (role.owner || role.admin));
+}
+
+function rememberPlayerAction(email, input, output, rarity) {
+  if (!playerRecentActions[email]) playerRecentActions[email] = [];
+  playerRecentActions[email].push({ input, output, rarity, time: Date.now() });
+  if (playerRecentActions[email].length > 20) {
+    playerRecentActions[email] = playerRecentActions[email].slice(-20);
+  }
 }
 
 async function getWordByInput(input) {
@@ -298,9 +335,9 @@ app.post("/register", async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const owner = email === OWNER_EMAIL;
-    await createUser(email, hash, owner);
+    await createUser(email, hash);
 
-    res.json({ ok: true, owner });
+    res.json({ ok: true, owner, admin: owner });
   } catch (error) {
     console.error("register Fehler:", error.message);
     res.status(500).json({ ok: false, error: "server" });
@@ -319,7 +356,7 @@ app.post("/login", async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.json({ ok: false });
 
-    res.json({ ok: true, owner: !!user.owner });
+    res.json({ ok: true, owner: !!user.owner, admin: !!user.admin });
   } catch (error) {
     console.error("login Fehler:", error.message);
     res.status(500).json({ ok: false });
@@ -341,6 +378,7 @@ app.post("/submitItem", async (req, res) => {
 
     // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
     if (existing) {
+      rememberPlayerAction(email, normalizedInput, existing.output, existing.rarity || "common");
       return res.json({
         ok: true,
         input: normalizedInput,
@@ -356,6 +394,7 @@ app.post("/submitItem", async (req, res) => {
     const discoveredAt = Date.now();
 
     await createWordMapping(normalizedInput, output, rarity, email, discoveredAt);
+    rememberPlayerAction(email, normalizedInput, output, rarity);
     firstDiscovery = true;
 
     res.json({
@@ -430,26 +469,39 @@ app.get("/leaderboard", async (_req, res) => {
 io.on("connection", (socket) => {
 
   /* PLAYER ONLINE */
-  socket.on("player:online", ({ email }) => {
-    const ban = bannedPlayers[email];
-    if (ban) {
-      const isPermanent = ban.until === null;
-      const stillBanned = isPermanent || Date.now() < ban.until;
+  socket.on("player:online", async ({ email }) => {
+    try {
+      const user = await getUserByEmail(email);
+      const role = {
+        email,
+        owner: email === OWNER_EMAIL,
+        admin: !!(user && user.admin)
+      };
+      socketRoles[socket.id] = role;
+      if (role.owner) ownerSockets.add(socket.id);
 
-      if (stillBanned) {
-        socket.emit("player:banned", {
-          reason: ban.reason,
-          remaining: isPermanent ? null : Math.ceil((ban.until - Date.now()) / 1000),
-          permanent: isPermanent
-        });
-        return;
+      const ban = bannedPlayers[email];
+      if (ban) {
+        const isPermanent = ban.until === null;
+        const stillBanned = isPermanent || Date.now() < ban.until;
+
+        if (stillBanned) {
+          socket.emit("player:banned", {
+            reason: ban.reason,
+            remaining: isPermanent ? null : Math.ceil((ban.until - Date.now()) / 1000),
+            permanent: isPermanent
+          });
+          return;
+        }
+
+        delete bannedPlayers[email];
       }
 
-      delete bannedPlayers[email];
+      onlinePlayers[email] = socket.id;
+      io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+    } catch (error) {
+      console.error("player:online Fehler:", error.message);
     }
-
-    onlinePlayers[email] = socket.id;
-    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
   });
 
   /* PLAYER OFFLINE */
@@ -462,6 +514,8 @@ io.on("connection", (socket) => {
     }
     io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
     delete spectatingOwners[socket.id];
+    ownerSockets.delete(socket.id);
+    delete socketRoles[socket.id];
   });
 
   /* LIVE TYPING (SPECTATE) */
@@ -493,14 +547,18 @@ io.on("connection", (socket) => {
 
   // PLAYER LIST
   socket.on("owner:getPlayers", () => {
-    const players = Object.keys(onlinePlayers).map(email => ({
-      email
-    }));
+    const players = Object.keys(onlinePlayers).map(email => {
+      const sid = onlinePlayers[email];
+      const role = socketRoles[sid] || { owner: email === OWNER_EMAIL, admin: false };
+      return { email, owner: !!role.owner, admin: !!role.admin };
+    });
     socket.emit("owner:playersList", players);
   });
 
   // SUSPECT PLAYERS (seltene/godly discovery Muster)
   socket.on("owner:getSuspectPlayers", async () => {
+    const role = socketRoles[socket.id];
+    if (!canModerate(role)) return;
     try {
       const words = await getAllWordsMap();
       const suspects = calculateSuspectPlayers(words);
@@ -512,29 +570,108 @@ io.on("connection", (socket) => {
   });
 
   // BAN PLAYER
-  socket.on("owner:banPlayer", ({ email, reason, duration }) => {
-    const permanent = duration === null || duration === undefined;
-    bannedPlayers[email] = {
-      reason,
-      until: permanent ? null : Date.now() + duration * 1000
-    };
+  socket.on("owner:banPlayer", async ({ email, reason, duration }) => {
+    const actor = socketRoles[socket.id];
+    if (!canModerate(actor)) return;
 
-    const target = onlinePlayers[email];
-    if (target) {
-      io.to(target).emit("player:banned", {
+    try {
+      const targetUser = await getUserByEmail(email);
+      const isTargetOwner = email === OWNER_EMAIL;
+      const isTargetAdmin = !!(targetUser && targetUser.admin);
+
+      if (isTargetOwner || isTargetAdmin) {
+        socket.emit("owner:banError", { error: "Owner/Admin kann nicht gebannt werden." });
+        return;
+      }
+
+      const permanent = duration === null || duration === undefined;
+      bannedPlayers[email] = {
         reason,
-        remaining: permanent ? null : duration,
-        permanent
-      });
-      io.sockets.sockets.get(target)?.disconnect(true);
-      delete onlinePlayers[email];
-    }
+        until: permanent ? null : Date.now() + duration * 1000
+      };
 
-    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+      const target = onlinePlayers[email];
+      if (target) {
+        io.to(target).emit("player:banned", {
+          reason,
+          remaining: permanent ? null : duration,
+          permanent
+        });
+        io.sockets.sockets.get(target)?.disconnect(true);
+        delete onlinePlayers[email];
+      }
+
+      if (!actor.owner) {
+        const history = (playerRecentActions[email] || []).slice(-20);
+        for (const ownerSocketId of ownerSockets) {
+          io.to(ownerSocketId).emit("owner:banAudit", {
+            by: actor.email,
+            target: email,
+            reason,
+            duration,
+            permanent,
+            recentActions: history
+          });
+        }
+      }
+
+      io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+    } catch (error) {
+      console.error("owner:banPlayer Fehler:", error.message);
+    }
+  });
+
+
+  // OWNER: ADMIN RECHTE VERGEBEN
+  socket.on("owner:grantAdmin", async ({ email }) => {
+    const role = socketRoles[socket.id];
+    if (!role || !role.owner) return;
+
+    try {
+      const ok = await setUserAdmin(email, true);
+      socket.emit("owner:grantAdminResult", {
+        ok,
+        email,
+        error: ok ? null : "User nicht gefunden"
+      });
+    } catch (error) {
+      console.error("owner:grantAdmin Fehler:", error.message);
+      socket.emit("owner:grantAdminResult", { ok: false, email, error: "Serverfehler" });
+    }
+  });
+
+  // GEBANNTE SPIELER LADEN
+  socket.on("owner:getBannedPlayers", () => {
+    const role = socketRoles[socket.id];
+    if (!canModerate(role)) return;
+
+    const now = Date.now();
+    const data = Object.entries(bannedPlayers).map(([email, ban]) => {
+      const permanent = ban.until === null;
+      const remaining = permanent ? null : Math.max(0, Math.ceil((ban.until - now) / 1000));
+      return { email, reason: ban.reason, permanent, remaining };
+    });
+
+    socket.emit("owner:bannedPlayers", data);
+  });
+
+  // ENTBANNEN
+  socket.on("owner:unbanPlayer", ({ email }) => {
+    const role = socketRoles[socket.id];
+    if (!canModerate(role)) return;
+
+    if (bannedPlayers[email]) {
+      delete bannedPlayers[email];
+      socket.emit("owner:unbanResult", { ok: true, email });
+    } else {
+      socket.emit("owner:unbanResult", { ok: false, email, error: "Spieler ist nicht gebannt" });
+    }
   });
 
   // SPECTATE START
   socket.on("owner:spectateStart", ({ email }) => {
+    const role = socketRoles[socket.id];
+    if (!canModerate(role)) return;
     spectatingOwners[socket.id] = email;
   });
 
@@ -545,6 +682,8 @@ io.on("connection", (socket) => {
 
   // ANNOUNCEMENTS
   socket.on("ownerAnnouncement", ({ text }) => {
+    const role = socketRoles[socket.id];
+    if (!role || !role.owner) return;
     io.emit("announcement", { text });
   });
 });

@@ -14,11 +14,13 @@ let isSpectating = false;
 const foundSet = new Set(); // NEU: für keine Duplikate in Found Items
 
 /* Wird von index.html beim Login aufgerufen */
-function initPlayer(email) {
+function initPlayer(email, role = {}) {
   currentPlayerEmail = email;
 
   playerSocket.emit("player:online", {
-    email: currentPlayerEmail
+    email: currentPlayerEmail,
+    owner: !!role.owner,
+    admin: !!role.admin
   });
 }
 
