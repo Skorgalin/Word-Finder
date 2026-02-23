@@ -34,7 +34,7 @@ input,button{
   font-size:18px;
   margin:5px;
 }
-#foundItems,#adminPanel{
+#foundItems,#ownerPanel{
   border:1px solid #444;
   padding:10px;
   margin-top:10px;
@@ -86,23 +86,23 @@ input,button{
   <button onclick="submitItem()">OK</button>
 
   <button onclick="toggleFound()">Found Items</button>
-  <button id="adminBtn" style="display:none;" onclick="askAdminPassword()">Admin</button>
+  <button id="ownerBtn" style="display:none;" onclick="askOwnerPassword()">Owner</button>
   <button onclick="logout()">Logout</button>
 
   <div id="foundItems"></div>
 
-  <!-- ADMIN PANEL -->
-  <div id="adminPanel">
-    <h3>Admin Dashboard</h3>
+  <!-- OWNER PANEL -->
+  <div id="ownerPanel">
+    <h3>Owner Dashboard</h3>
 
     <input id="announceText" placeholder="Ankündigung">
     <button onclick="sendAnnouncement()">Senden</button>
 
     <hr>
 
-    <input id="adminSearchInput" placeholder="Input">
-    <button onclick="adminSearch()">OK</button>
-    <div id="adminSearchResult"></div>
+    <input id="ownerSearchInput" placeholder="Input">
+    <button onclick="ownerSearch()">OK</button>
+    <div id="ownerSearchResult"></div>
 
     <hr>
 
@@ -139,8 +139,8 @@ const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 
 let email = "";
-let isAdmin = false;
-let adminUnlocked = false;
+let isOwner = false;
+let ownerUnlocked = false;
 
 const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
@@ -194,7 +194,7 @@ registerBtn.onclick = async ()=>{
     const registerData = await registerResponse.json();
 
     if(registerData.ok){
-      enterGame(registerData.admin);
+      enterGame(registerData.owner);
       return;
     }
 
@@ -212,7 +212,7 @@ registerBtn.onclick = async ()=>{
 
       const loginData = await loginResponse.json();
       if(loginData.ok){
-        enterGame(loginData.admin);
+        enterGame(loginData.owner);
       } else {
         alert("Account existiert bereits. Bitte korrekt einloggen.");
       }
@@ -255,7 +255,7 @@ loginBtn.onclick = async ()=>{
     const data = await response.json();
 
     if(data.ok){
-      enterGame(data.admin);
+      enterGame(data.owner);
     } else {
       alert("Falsches Passwort");
     }
@@ -270,16 +270,17 @@ loginBtn.onclick = async ()=>{
 /* =================================================
    ENTER GAME
    ================================================= */
-function enterGame(admin){
+function enterGame(owner){
   email = emailInput.value;
-  isAdmin = admin || email === "till.behner@icloud.com";
-  adminUnlocked = false;
+  const OWNER_EMAIL = "till.behner@icloud.com";
+  isOwner = owner || email === OWNER_EMAIL;
+  ownerUnlocked = false;
 
   document.getElementById("login").style.display="none";
   document.getElementById("game").style.display="flex";
 
-  if(isAdmin){
-    document.getElementById("adminBtn").style.display="inline";
+  if(isOwner){
+    document.getElementById("ownerBtn").style.display="inline";
   }
 
   initPlayer(email);
@@ -354,19 +355,19 @@ function toggleFound(){
 }
 
 /* =================================================
-   ADMIN
+   OWNER
    ================================================= */
-function askAdminPassword(){
-  if(adminUnlocked){
-    adminPanel.style.display =
-      adminPanel.style.display==="none"?"block":"none";
+function askOwnerPassword(){
+  if(ownerUnlocked){
+    ownerPanel.style.display =
+      ownerPanel.style.display==="none"?"block":"none";
     return;
   }
 
-  const pw = prompt("Admin Passwort:");
+  const pw = prompt("Owner Passwort:");
   if(pw==="X9$QvR7!eM2#A8wK@C"){
-    adminUnlocked=true;
-    document.getElementById("adminPanel").style.display="block";
+    ownerUnlocked=true;
+    document.getElementById("ownerPanel").style.display="block";
   } else {
     alert("Falsches Passwort");
   }
@@ -376,9 +377,9 @@ function askAdminPassword(){
    ANNOUNCEMENTS
    ================================================= */
 function sendAnnouncement(){
-  if(!adminUnlocked) return;
+  if(!ownerUnlocked) return;
   const text=document.getElementById("announceText").value;
-  socket.emit("adminAnnouncement",{text});
+  socket.emit("ownerAnnouncement",{text});
   document.getElementById("announceText").value="";
 }
 
@@ -391,12 +392,12 @@ socket.on("announcement",data=>{
 });
 
 /* =================================================
-   ADMIN SEARCH
+   OWNER SEARCH
    ================================================= */
-function adminSearch(){
-  const query=document.getElementById("adminSearchInput").value;
+function ownerSearch(){
+  const query=document.getElementById("ownerSearchInput").value;
 
-  fetch("/adminSearch",{
+  fetch("/ownerSearch",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ query })
@@ -404,7 +405,7 @@ function adminSearch(){
   .then(r=>r.json())
   .then(d=>{
     if(d.ok){
-      document.getElementById("adminSearchResult").textContent =
+      document.getElementById("ownerSearchResult").textContent =
         d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]";
     }
   });
@@ -416,8 +417,8 @@ function adminSearch(){
 let currentSpectateEmail = "";
 
 function loadSuspectPlayers(){
-  if(!adminUnlocked) return;
-  socket.emit("admin:getSuspectPlayers");
+  if(!ownerUnlocked) return;
+  socket.emit("owner:getSuspectPlayers");
 }
 
 function createPlayerActionRow(emailText, metaText){
@@ -450,12 +451,12 @@ function createPlayerActionRow(emailText, metaText){
 }
 
 function loadPlayers(){
-  if(!adminUnlocked) return;
-  socket.emit("admin:getPlayers");
+  if(!ownerUnlocked) return;
+  socket.emit("owner:getPlayers");
 }
 
 function openBanDialog(playerEmail){
-  if(!adminUnlocked) return;
+  if(!ownerUnlocked) return;
 
   const reason = prompt("Grund für Bann:", "Regelverstoß") || "";
   if(!reason.trim()){
@@ -488,13 +489,13 @@ function openBanDialog(playerEmail){
     }
   }
 
-  socket.emit("admin:banPlayer", { email: playerEmail, reason: reason.trim(), duration });
+  socket.emit("owner:banPlayer", { email: playerEmail, reason: reason.trim(), duration });
 }
 
 function startSpectate(playerEmail){
-  if(!adminUnlocked) return;
+  if(!ownerUnlocked) return;
   currentSpectateEmail = playerEmail;
-  socket.emit("admin:spectateStart", { email: playerEmail });
+  socket.emit("owner:spectateStart", { email: playerEmail });
 
   document.getElementById("spectatePanel").style.display = "block";
   document.getElementById("spectateTitle").textContent = `Spectate: ${playerEmail}`;
@@ -503,12 +504,12 @@ function startSpectate(playerEmail){
 }
 
 function stopSpectate(){
-  socket.emit("admin:spectateStop");
+  socket.emit("owner:spectateStop");
   currentSpectateEmail = "";
   document.getElementById("spectatePanel").style.display = "none";
 }
 
-socket.on("admin:playersList",(players)=>{
+socket.on("owner:playersList",(players)=>{
   const list=document.getElementById("playersList");
   list.innerHTML="";
 
@@ -522,7 +523,7 @@ socket.on("admin:playersList",(players)=>{
   });
 });
 
-socket.on("admin:suspectPlayers",(suspects)=>{
+socket.on("owner:suspectPlayers",(suspects)=>{
   const list=document.getElementById("suspectPlayersList");
   list.innerHTML = "";
 

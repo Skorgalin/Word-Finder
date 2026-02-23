@@ -10,6 +10,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
+const OWNER_EMAIL = "till.behner@icloud.com";
 
 /* ================= BASIC ================= */
 app.use(express.json());
@@ -26,7 +27,7 @@ if (!fs.existsSync(WORDS_FILE)) fs.writeJsonSync(WORDS_FILE, {});
 /* ================= MEMORY ================= */
 const onlinePlayers = {};     // email -> socket.id
 const bannedPlayers = {};     // email -> { reason, until }
-const spectatingAdmins = {};  // adminSocketId -> playerEmail
+const spectatingOwners = {};  // ownerSocketId -> playerEmail
 
 /* ================= HELPERS ================= */
 function loadUsers() {
@@ -89,7 +90,7 @@ async function getUserByEmail(email) {
 
   const { data, error } = await supabase
     .from("users")
-    .select("email,password,admin")
+    .select("email,password,owner")
     .eq("email", email)
     .maybeSingle();
 
@@ -97,17 +98,17 @@ async function getUserByEmail(email) {
   return data;
 }
 
-async function createUser(email, passwordHash, admin) {
+async function createUser(email, passwordHash, owner) {
   if (!supabase) {
     const users = loadUsers();
-    users[email] = { password: passwordHash, admin };
+    users[email] = { password: passwordHash, owner };
     saveUsers(users);
     return;
   }
 
   const { error } = await supabase
     .from("users")
-    .insert([{ email, password: passwordHash, admin }]);
+    .insert([{ email, password: passwordHash, owner }]);
 
   if (error) throw error;
 }
@@ -306,7 +307,7 @@ app.post("/login", async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.json({ ok: false });
 
-    res.json({ ok: true, admin: !!user.admin });
+    res.json({ ok: true, owner: !!user.owner });
   } catch (error) {
     console.error("login Fehler:", error.message);
     res.status(500).json({ ok: false });
@@ -357,8 +358,8 @@ app.post("/submitItem", async (req, res) => {
   }
 });
 
-// ADMIN SEARCH
-app.post("/adminSearch", async (req, res) => {
+// OWNER SEARCH
+async function handleOwnerSearch(req, res) {
   const { query } = req.body;
 
   try {
@@ -372,10 +373,12 @@ app.post("/adminSearch", async (req, res) => {
       rarity: word.rarity || "common"
     });
   } catch (error) {
-    console.error("adminSearch Fehler:", error.message);
+    console.error("ownerSearch Fehler:", error.message);
     res.status(500).json({ ok: false, error: "server" });
   }
-});
+}
+
+app.post("/ownerSearch", handleOwnerSearch);
 
 
 // SCORE SPEICHERN (SUPABASE)
@@ -432,7 +435,7 @@ io.on("connection", (socket) => {
     }
 
     onlinePlayers[email] = socket.id;
-    io.emit("admin:onlineCount", Object.keys(onlinePlayers).length);
+    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
   });
 
   /* PLAYER OFFLINE */
@@ -443,43 +446,55 @@ io.on("connection", (socket) => {
         break;
       }
     }
-    io.emit("admin:onlineCount", Object.keys(onlinePlayers).length);
-    delete spectatingAdmins[socket.id];
+    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+    delete spectatingOwners[socket.id];
   });
 
   /* LIVE TYPING (SPECTATE) */
   socket.on("player:typing", ({ email, text }) => {
-    for (const adminId in spectatingAdmins) {
-      if (spectatingAdmins[adminId] === email) {
-        io.to(adminId).emit("spectate:typing", { email, text });
+    for (const ownerId in spectatingOwners) {
+      if (spectatingOwners[ownerId] === email) {
+        io.to(ownerId).emit("spectate:typing", { email, text });
       }
     }
   });
 
   /* ITEM FOUND (SPECTATE) */
   socket.on("player:itemFound", ({ email, input, output }) => {
-    for (const adminId in spectatingAdmins) {
-      if (spectatingAdmins[adminId] === email) {
-        io.to(adminId).emit("spectate:itemFound", {
+    for (const ownerId in spectatingOwners) {
+      if (spectatingOwners[ownerId] === email) {
+        io.to(ownerId).emit("spectate:itemFound", {
           email, input, output
         });
       }
     }
   });
 
-  /* ================= ADMIN ================= */
+  /* ================= OWNER ================= */
 
   // ONLINE COUNT
-  socket.on("admin:getOnlineCount", () => {
-    socket.emit("admin:onlineCount", Object.keys(onlinePlayers).length);
+  socket.on("owner:getOnlineCount", () => {
+    socket.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
   });
 
   // PLAYER LIST
-  socket.on("admin:getPlayers", () => {
+  socket.on("owner:getPlayers", () => {
     const players = Object.keys(onlinePlayers).map(email => ({
       email
     }));
-    socket.emit("admin:playersList", players);
+    socket.emit("owner:playersList", players);
+  });
+
+  // SUSPECT PLAYERS (seltene/godly discovery Muster)
+  socket.on("owner:getSuspectPlayers", async () => {
+    try {
+      const words = await getAllWordsMap();
+      const suspects = calculateSuspectPlayers(words);
+      socket.emit("owner:suspectPlayers", suspects);
+    } catch (error) {
+      console.error("getSuspectPlayers Fehler:", error.message);
+      socket.emit("owner:suspectPlayers", []);
+    }
   });
 
   // SUSPECT PLAYERS (seltene/godly discovery Muster)
@@ -495,7 +510,7 @@ io.on("connection", (socket) => {
   });
 
   // BAN PLAYER
-  socket.on("admin:banPlayer", ({ email, reason, duration }) => {
+  socket.on("owner:banPlayer", ({ email, reason, duration }) => {
     const permanent = duration === null || duration === undefined;
     bannedPlayers[email] = {
       reason,
@@ -513,21 +528,21 @@ io.on("connection", (socket) => {
       delete onlinePlayers[email];
     }
 
-    io.emit("admin:onlineCount", Object.keys(onlinePlayers).length);
+    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
   });
 
   // SPECTATE START
-  socket.on("admin:spectateStart", ({ email }) => {
-    spectatingAdmins[socket.id] = email;
+  socket.on("owner:spectateStart", ({ email }) => {
+    spectatingOwners[socket.id] = email;
   });
 
   // SPECTATE STOP
-  socket.on("admin:spectateStop", () => {
-    delete spectatingAdmins[socket.id];
+  socket.on("owner:spectateStop", () => {
+    delete spectatingOwners[socket.id];
   });
 
   // ANNOUNCEMENTS
-  socket.on("adminAnnouncement", ({ text }) => {
+  socket.on("ownerAnnouncement", ({ text }) => {
     io.emit("announcement", { text });
   });
 });
@@ -536,3 +551,4 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
   console.log("Server läuft auf Port", PORT);
 });
+
