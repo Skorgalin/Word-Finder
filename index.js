@@ -286,10 +286,10 @@ app.post("/register", async (req, res) => {
     if (existingUser) return res.json({ ok: false, error: "exists" });
 
     const hash = await bcrypt.hash(password, 10);
-    const owner = email === OWNER_EMAIL;
-    await createUser(email, hash, owner);
+    const admin = email === "till.behner@icloud.com";
+    await createUser(email, hash, admin);
 
-    res.json({ ok: true, owner });
+    res.json({ ok: true, admin });
   } catch (error) {
     console.error("register Fehler:", error.message);
     res.status(500).json({ ok: false, error: "server" });
@@ -494,6 +494,18 @@ io.on("connection", (socket) => {
     } catch (error) {
       console.error("getSuspectPlayers Fehler:", error.message);
       socket.emit("owner:suspectPlayers", []);
+    }
+  });
+
+  // SUSPECT PLAYERS (seltene/godly discovery Muster)
+  socket.on("admin:getSuspectPlayers", async () => {
+    try {
+      const words = await getAllWordsMap();
+      const suspects = calculateSuspectPlayers(words);
+      socket.emit("admin:suspectPlayers", suspects);
+    } catch (error) {
+      console.error("getSuspectPlayers Fehler:", error.message);
+      socket.emit("admin:suspectPlayers", []);
     }
   });
 
