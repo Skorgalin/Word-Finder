@@ -117,8 +117,17 @@ input,button{
       <hr>
     </div>
 
-    <input id="ownerSearchInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Input">
-    <button onclick="ownerSearch()">OK</button>
+    <h4>Output Suche / Bearbeiten</h4>
+    <input id="ownerSearchInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Output">
+    <input id="ownerDesiredInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Gewünschter Input (optional)">
+    <select id="ownerRaritySelect">
+      <option value="common">COMMON</option>
+      <option value="selten">SELTEN</option>
+      <option value="legendär">LEGENDÄR</option>
+      <option value="mythisch">MYTHISCH</option>
+      <option value="godly">GODLY</option>
+    </select>
+    <button onclick="ownerSearch()">Anwenden</button>
     <div id="ownerSearchResult"></div>
 
     <hr>
@@ -313,7 +322,9 @@ function enterGame(owner, admin){
   document.getElementById("game").style.display="flex";
 
   if(isOwner || isAdmin){
-    document.getElementById("ownerBtn").style.display="inline";
+    const ownerBtn = document.getElementById("ownerBtn");
+    ownerBtn.style.display="inline";
+    ownerBtn.textContent = isOwner ? "Owner" : "Admin";
   }
 
   initPlayer(email,{ owner: isOwner, admin: isAdmin });
@@ -358,7 +369,12 @@ function submitItem(){
   })
   .then(r=>r.json())
   .then(d=>{
-    if(!d.ok) return;
+    if(!d.ok){
+      if(d.error === "banned"){
+        alert(`Du bist gebannt${d.permanent ? " (Permanent)" : ` (${d.remaining}s verbleibend)`}.`);
+      }
+      return;
+    }
 
     const key = d.input + "->" + d.output;
 
@@ -433,19 +449,27 @@ socket.on("announcement",data=>{
    OWNER SEARCH
    ================================================= */
 function ownerSearch(){
-  const query=document.getElementById("ownerSearchInput").value;
+  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+
+  const output = document.getElementById("ownerSearchInput").value.trim();
+  const desiredInput = document.getElementById("ownerDesiredInput").value.trim();
+  const rarity = document.getElementById("ownerRaritySelect").value;
 
   fetch("/ownerSearch",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ query })
+    body:JSON.stringify({ output, desiredInput, rarity })
   })
   .then(r=>r.json())
   .then(d=>{
-    if(d.ok){
-      document.getElementById("ownerSearchResult").textContent =
-        d.input+" → "+d.output+" ["+rarityLabel(d.rarity)+"]";
+    if(!d.ok){
+      document.getElementById("ownerSearchResult").textContent = "Fehler bei der Output-Suche.";
+      return;
     }
+
+    const status = d.created ? "neu erstellt" : "aktualisiert";
+    document.getElementById("ownerSearchResult").textContent =
+      `${d.input} → ${d.output} [${rarityLabel(d.rarity)}] (${status})`;
   });
 }
 
@@ -671,17 +695,20 @@ socket.on("spectate:itemFound",({ email: foundEmail, input, output })=>{
   document.getElementById("spectateFound").textContent = `${input} → ${output}`;
 });
 
-/* =================================================
-   BAN SCREEN
-   ================================================= */
-socket.on("player:banned",(data)=>{
-  document.body.innerHTML=`
-    <div style="color:red;text-align:center;margin-top:40px">
-      <h2>Du wurdest gebannt</h2>
-      <p>${data.reason || ""}</p>
-    </div>
-  `;
+socket.on("owner:mappingUpdated", (data)=>{
+  const items = document.querySelectorAll("#foundItems .foundItem");
+  items.forEach((item)=>{
+    const text = item.textContent || "";
+    const hasOutput = text.includes(`→ ${data.output}`);
+    const oldInputMatch = !data.oldInput || text.includes(`${data.oldInput} →`);
+    if(hasOutput && oldInputMatch){
+      item.innerHTML = `${data.newInput} → ${data.output} [${rarityLabel(data.rarity)}]`;
+      gameFoundSet.delete(`${data.oldInput}->${data.output}`);
+      gameFoundSet.add(`${data.newInput}->${data.output}`);
+    }
+  });
 });
+
 </script>
 
 </body>

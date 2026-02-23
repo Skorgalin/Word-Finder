@@ -275,6 +275,44 @@ async function createWordMapping(input, output, rarity, discoveredBy, discovered
   if (error) throw error;
 }
 
+async function replaceAllWordMappings(words) {
+  if (!supabase) {
+    saveWords(words);
+    return;
+  }
+
+  const rows = Object.entries(words).map(([input, entry]) => ({
+    input,
+    output: entry.output,
+    rarity: entry.rarity || "common",
+    discovered_by: entry.discoveredBy || null,
+    discovered_at: entry.time || Date.now()
+  }));
+
+  const del = await supabase.from("word_mappings").delete().neq("input", "");
+  if (del.error) throw del.error;
+
+  if (rows.length) {
+    const ins = await supabase.from("word_mappings").insert(rows);
+    if (ins.error) throw ins.error;
+  }
+}
+
+function findInputByOutput(words, output) {
+  for (const [input, data] of Object.entries(words)) {
+    if (data?.output === output) return input;
+  }
+  return null;
+}
+
+function makeOwnerInput(words) {
+  let candidate = `input_${Math.random().toString(36).slice(2, 8)}`;
+  while (words[candidate]) {
+    candidate = `input_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  return candidate;
+}
+
 
 function normalizeUserRole(user, emailFallback = "") {
   if (!user) return null;
@@ -451,6 +489,22 @@ app.post("/submitItem", async (req, res) => {
   if (!normalizedInput) return res.json({ ok: false });
 
   try {
+    const ban = bannedPlayers[email];
+    if (ban) {
+      const permanent = ban.until === null;
+      const active = permanent || Date.now() < ban.until;
+      if (active) {
+        return res.json({
+          ok: false,
+          error: "banned",
+          reason: ban.reason,
+          remaining: permanent ? null : Math.max(0, Math.ceil((ban.until - Date.now()) / 1000)),
+          permanent
+        });
+      }
+      delete bannedPlayers[email];
+    }
+
     let firstDiscovery = false;
     const existing = await getWordByInput(normalizedInput);
 
@@ -491,17 +545,71 @@ app.post("/submitItem", async (req, res) => {
 // OWNER SEARCH
 async function handleOwnerSearch(req, res) {
   if (!ensurePersistentStore(res)) return;
-  const { query } = req.body;
+  const { output, desiredInput, rarity } = req.body;
+
+  const normalizedOutput = String(output || "").trim();
+  if (!normalizedOutput) {
+    return res.status(400).json({ ok: false, error: "output_required" });
+  }
 
   try {
-    const word = await getWordByInput(query);
-    if (!word) return res.json({ ok: false });
+    const words = await getAllWordsMap();
+    const existingInput = findInputByOutput(words, normalizedOutput);
+
+    if (!existingInput) {
+      const inputToUse = String(desiredInput || "").trim() || makeOwnerInput(words);
+      const rarityToUse = rarity || "common";
+      words[inputToUse] = {
+        output: normalizedOutput,
+        rarity: rarityToUse,
+        discoveredBy: words[inputToUse]?.discoveredBy || "owner",
+        time: words[inputToUse]?.time || Date.now()
+      };
+      await replaceAllWordMappings(words);
+
+      io.emit("owner:mappingUpdated", {
+        oldInput: null,
+        newInput: inputToUse,
+        output: normalizedOutput,
+        rarity: rarityToUse
+      });
+
+      return res.json({ ok: true, created: true, input: inputToUse, output: normalizedOutput, rarity: rarityToUse });
+    }
+
+    const current = words[existingInput] || {};
+    const targetInput = String(desiredInput || "").trim() || existingInput;
+    const targetRarity = rarity || current.rarity || "common";
+
+    if (targetInput !== existingInput) {
+      if (!words[targetInput]) {
+        words[targetInput] = { ...current, rarity: targetRarity };
+        delete words[existingInput];
+      } else {
+        const other = words[targetInput];
+        words[targetInput] = { ...current, rarity: targetRarity };
+        words[existingInput] = other;
+      }
+    } else {
+      words[existingInput] = { ...current, rarity: targetRarity };
+    }
+
+    await replaceAllWordMappings(words);
+
+    io.emit("owner:mappingUpdated", {
+      oldInput: existingInput,
+      newInput: targetInput,
+      output: normalizedOutput,
+      rarity: targetRarity
+    });
 
     res.json({
       ok: true,
-      input: query,
-      output: word.output,
-      rarity: word.rarity || "common"
+      created: false,
+      input: targetInput,
+      output: normalizedOutput,
+      rarity: targetRarity,
+      switchedWith: targetInput !== existingInput && words[existingInput]?.output ? existingInput : null
     });
   } catch (error) {
     console.error("ownerSearch Fehler:", error.message);
@@ -675,8 +783,6 @@ io.on("connection", (socket) => {
           remaining: permanent ? null : duration,
           permanent
         });
-        io.sockets.sockets.get(target)?.disconnect(true);
-        delete onlinePlayers[email];
       }
 
       if (!actor.owner) {
@@ -740,6 +846,10 @@ io.on("connection", (socket) => {
 
     if (bannedPlayers[email]) {
       delete bannedPlayers[email];
+      const target = onlinePlayers[email];
+      if (target) {
+        io.to(target).emit("player:unbanned", { ok: true });
+      }
       socket.emit("owner:unbanResult", { ok: true, email });
     } else {
       socket.emit("owner:unbanResult", { ok: false, email, error: "Spieler ist nicht gebannt" });
