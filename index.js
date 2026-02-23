@@ -69,6 +69,13 @@ function ensureSupabase(res) {
   return false;
 }
 
+
+function canFallbackToLocal(error) {
+  if (REQUIRE_SUPABASE) return false;
+  console.warn("Supabase Fehler, fallback auf lokale Dateien:", error?.message || error);
+  return true;
+}
+
 function ensurePersistentStore(res) {
   if (supabase) return true;
 
@@ -125,7 +132,13 @@ async function getUserByEmail(email) {
       .maybeSingle());
   }
 
-  if (error) throw error;
+  if (error) {
+    if (canFallbackToLocal(error)) {
+      const users = loadUsers();
+      return users[email] ? normalizeUserRole({ email, ...users[email] }, email) : null;
+    }
+    throw error;
+  }
   return normalizeUserRole(data, email);
 }
 
@@ -148,7 +161,15 @@ async function createUser(email, passwordHash) {
       .insert([{ email, password: passwordHash, owner: email === OWNER_EMAIL }]);
   }
 
-  if (result.error) throw result.error;
+  if (result.error) {
+    if (canFallbackToLocal(result.error)) {
+      const users = loadUsers();
+      users[email] = { password: passwordHash, admin: email === OWNER_EMAIL };
+      saveUsers(users);
+      return;
+    }
+    throw result.error;
+  }
 }
 
 
@@ -177,7 +198,16 @@ async function setUserAdmin(email, admin) {
       .maybeSingle();
   }
 
-  if (query.error) throw query.error;
+  if (query.error) {
+    if (canFallbackToLocal(query.error)) {
+      const users = loadUsers();
+      if (!users[email]) return false;
+      users[email].admin = !!admin;
+      saveUsers(users);
+      return true;
+    }
+    throw query.error;
+  }
   return !!query.data;
 }
 
