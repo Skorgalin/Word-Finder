@@ -32,6 +32,9 @@ const spectatingOwners = {};  // privilegedSocketId -> playerEmail
 const socketRoles = {};        // socket.id -> { email, owner, admin }
 const ownerSockets = new Set();
 const playerRecentActions = {}; // email -> [{ input, output, rarity, time }]
+const chatServers = {};           // serverId -> Set<email>
+const userChatServer = {};        // email -> serverId
+const MAX_CHAT_SERVER_SIZE = 20;
 
 /* ================= HELPERS ================= */
 function loadUsers() {
@@ -142,29 +145,29 @@ async function getUserByEmail(email) {
   return normalizeUserRole(data, email);
 }
 
-async function createUser(email, passwordHash) {
+async function createUser(email, passwordHash, nickname) {
   if (!supabase) {
     const users = loadUsers();
-    users[email] = { password: passwordHash, admin: email === OWNER_EMAIL };
+    users[email] = { password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname };
     saveUsers(users);
     return;
   }
 
   let result = await supabase
     .from("users")
-    .insert([{ email, password: passwordHash, admin: email === OWNER_EMAIL }]);
+    .insert([{ email, password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname }]);
 
   if (result.error && String(result.error.message || "").toLowerCase().includes("column") && String(result.error.message || "").includes("admin")) {
     // Fallback für ältere Schema-Variante mit owner-Spalte.
     result = await supabase
       .from("users")
-      .insert([{ email, password: passwordHash, owner: email === OWNER_EMAIL }]);
+      .insert([{ email, password: passwordHash, owner: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname }]);
   }
 
   if (result.error) {
     if (canFallbackToLocal(result.error)) {
       const users = loadUsers();
-      users[email] = { password: passwordHash, admin: email === OWNER_EMAIL };
+      users[email] = { password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname };
       saveUsers(users);
       return;
     }
@@ -173,18 +176,22 @@ async function createUser(email, passwordHash) {
 }
 
 
-async function setUserAdmin(email, admin) {
+async function setUserRole(email, roleName) {
+  const role = String(roleName || "player").toLowerCase();
+  const admin = role === "admin" || role === "owner";
+
   if (!supabase) {
     const users = loadUsers();
     if (!users[email]) return false;
     users[email].admin = !!admin;
+    users[email].role = role;
     saveUsers(users);
     return true;
   }
 
   let query = await supabase
     .from("users")
-    .update({ admin: !!admin })
+    .update({ admin: !!admin, role })
     .eq("email", email)
     .select("email")
     .maybeSingle();
@@ -192,7 +199,7 @@ async function setUserAdmin(email, admin) {
   if (query.error && String(query.error.message || "").toLowerCase().includes("column") && String(query.error.message || "").includes("admin")) {
     query = await supabase
       .from("users")
-      .update({ owner: !!admin })
+      .update({ owner: !!admin, role })
       .eq("email", email)
       .select("email")
       .maybeSingle();
@@ -203,6 +210,7 @@ async function setUserAdmin(email, admin) {
       const users = loadUsers();
       if (!users[email]) return false;
       users[email].admin = !!admin;
+      users[email].role = role;
       saveUsers(users);
       return true;
     }
@@ -211,8 +219,40 @@ async function setUserAdmin(email, admin) {
   return !!query.data;
 }
 
+async function setUserAdmin(email, admin) {
+  return setUserRole(email, admin ? "admin" : "player");
+}
+
+async function updateUserNickname(email, nickname) {
+  if (!nickname) return;
+  if (!supabase) {
+    const users = loadUsers();
+    if (!users[email]) return;
+    users[email].nickname = nickname;
+    saveUsers(users);
+    return;
+  }
+
+  const { error } = await supabase.from("users").update({ nickname }).eq("email", email);
+  if (error && canFallbackToLocal(error)) {
+    const users = loadUsers();
+    if (!users[email]) return;
+    users[email].nickname = nickname;
+    saveUsers(users);
+    return;
+  }
+  if (error) throw error;
+}
+
 function canModerate(role) {
-  return !!(role && (role.owner || role.admin));
+  return !!(role && (role.owner || role.admin || role.moderator));
+}
+
+async function isPrivilegedEmail(email) {
+  if (!email) return false;
+  if (email === OWNER_EMAIL) return true;
+  const user = await getUserByEmail(email);
+  return !!(user && (user.admin || user.moderator));
 }
 
 function rememberPlayerAction(email, input, output, rarity) {
@@ -336,12 +376,17 @@ function normalizeUserRole(user, emailFallback = "") {
   if (!user) return null;
   const email = user.email || emailFallback;
   const isOwner = email === OWNER_EMAIL;
-  const isAdmin = !!(user.admin || user.owner) || isOwner;
+  const role = isOwner ? "owner" : (user.role || (user.admin || user.owner ? "admin" : "player"));
+  const isAdmin = role === "admin" || role === "owner";
+  const isModerator = role === "moderator" || isAdmin;
   return {
     ...user,
     email,
+    role,
+    nickname: user.nickname || email.split("@")[0],
     owner: isOwner,
-    admin: isAdmin
+    admin: isAdmin,
+    moderator: isModerator
   };
 }
 
@@ -461,7 +506,7 @@ app.post("/checkEmail", async (req, res) => {
 // REGISTER
 app.post("/register", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email, password } = req.body;
+  const { email, password, nickname } = req.body;
 
   try {
     const existingUser = await getUserByEmail(email);
@@ -469,9 +514,9 @@ app.post("/register", async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const owner = email === OWNER_EMAIL;
-    await createUser(email, hash);
+    await createUser(email, hash, String(nickname || "").trim() || email.split("@")[0]);
 
-    res.json({ ok: true, owner, admin: owner });
+    res.json({ ok: true, owner, admin: owner, moderator: owner, nickname: String(nickname || "").trim() || email.split("@")[0] });
   } catch (error) {
     console.error("register Fehler:", error.message);
     res.status(500).json({ ok: false, error: "server" });
@@ -481,7 +526,7 @@ app.post("/register", async (req, res) => {
 // LOGIN
 app.post("/login", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email, password } = req.body;
+  const { email, password, nickname } = req.body;
 
   try {
     const user = await getUserByEmail(email);
@@ -490,7 +535,12 @@ app.post("/login", async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.json({ ok: false });
 
-    res.json({ ok: true, owner: !!user.owner, admin: !!user.admin });
+    if (nickname && String(nickname).trim()) {
+      await updateUserNickname(email, String(nickname).trim());
+      user.nickname = String(nickname).trim();
+    }
+
+    res.json({ ok: true, owner: !!user.owner, admin: !!user.admin, moderator: !!user.moderator, nickname: user.nickname });
   } catch (error) {
     console.error("login Fehler:", error.message);
     res.status(500).json({ ok: false });
@@ -682,13 +732,18 @@ app.get("/leaderboard", async (_req, res) => {
 io.on("connection", (socket) => {
 
   /* PLAYER ONLINE */
-  socket.on("player:online", async ({ email }) => {
+  socket.on("player:online", async ({ email, nickname }) => {
     try {
       const user = await getUserByEmail(email);
+      if (nickname && String(nickname).trim()) {
+        await updateUserNickname(email, String(nickname).trim());
+      }
       const role = {
         email,
+        nickname: (nickname && String(nickname).trim()) || (user && user.nickname) || email.split("@")[0],
         owner: email === OWNER_EMAIL,
-        admin: !!(user && user.admin)
+        admin: !!(user && user.admin),
+        moderator: !!(user && user.moderator)
       };
       socketRoles[socket.id] = role;
       if (role.owner) ownerSockets.add(socket.id);
@@ -711,6 +766,23 @@ io.on("connection", (socket) => {
       }
 
       onlinePlayers[email] = socket.id;
+
+      let targetServerId = null;
+      for (const [sid, members] of Object.entries(chatServers)) {
+        if (members.size < MAX_CHAT_SERVER_SIZE) {
+          targetServerId = sid;
+          break;
+        }
+      }
+      if (!targetServerId) {
+        targetServerId = `S${Object.keys(chatServers).length + 1}`;
+        chatServers[targetServerId] = new Set();
+      }
+      chatServers[targetServerId].add(email);
+      userChatServer[email] = targetServerId;
+
+      socket.emit("chat:assignedServer", { serverId: targetServerId });
+      io.emit("chat:serverList", Object.keys(chatServers));
       io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
     } catch (error) {
       console.error("player:online Fehler:", error.message);
@@ -726,9 +798,19 @@ io.on("connection", (socket) => {
       }
     }
     io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+    const role = socketRoles[socket.id];
+    if (role && role.email) {
+      const sid = userChatServer[role.email];
+      if (sid && chatServers[sid]) {
+        chatServers[sid].delete(role.email);
+        if (chatServers[sid].size === 0) delete chatServers[sid];
+      }
+      delete userChatServer[role.email];
+    }
     delete spectatingOwners[socket.id];
     ownerSockets.delete(socket.id);
     delete socketRoles[socket.id];
+    io.emit("chat:serverList", Object.keys(chatServers));
   });
 
   /* LIVE TYPING (SPECTATE) */
@@ -760,10 +842,18 @@ io.on("connection", (socket) => {
 
   // PLAYER LIST
   socket.on("owner:getPlayers", () => {
+    const requester = socketRoles[socket.id] || {};
     const players = Object.keys(onlinePlayers).map(email => {
       const sid = onlinePlayers[email];
-      const role = socketRoles[sid] || { owner: email === OWNER_EMAIL, admin: false };
-      return { email, owner: !!role.owner, admin: !!role.admin };
+      const role = socketRoles[sid] || { owner: email === OWNER_EMAIL, admin: false, moderator: false, nickname: email.split("@")[0] };
+      return {
+        email,
+        emailVisible: !!requester.owner,
+        nickname: role.nickname || email.split("@")[0],
+        owner: !!role.owner,
+        admin: !!role.admin,
+        moderator: !!role.moderator
+      };
     });
     socket.emit("owner:playersList", players);
   });
@@ -791,9 +881,14 @@ io.on("connection", (socket) => {
       const targetUser = await getUserByEmail(email);
       const isTargetOwner = email === OWNER_EMAIL;
       const isTargetAdmin = !!(targetUser && targetUser.admin);
+      const isTargetModerator = !!(targetUser && targetUser.moderator && !targetUser.admin);
 
-      if (isTargetOwner || isTargetAdmin) {
-        socket.emit("owner:banError", { error: "Owner/Admin kann nicht gebannt werden." });
+      if (isTargetOwner) {
+        socket.emit("owner:banError", { error: "Owner kann nicht gebannt werden." });
+        return;
+      }
+      if (!actor.owner && (isTargetAdmin || isTargetModerator)) {
+        socket.emit("owner:banError", { error: "Nur Owner kann Admins/Moderatoren bannen." });
         return;
       }
 
@@ -845,13 +940,16 @@ io.on("connection", (socket) => {
 
       if (ok && onlinePlayers[email]) {
         const targetSocketId = onlinePlayers[email];
-        const existingRole = socketRoles[targetSocketId] || { email, owner: email === OWNER_EMAIL, admin: false };
+        const existingRole = socketRoles[targetSocketId] || { email, owner: email === OWNER_EMAIL, admin: false, moderator: false };
         existingRole.admin = true;
+        existingRole.moderator = true;
         existingRole.owner = existingRole.owner || email === OWNER_EMAIL;
         socketRoles[targetSocketId] = existingRole;
         io.to(targetSocketId).emit("player:roleUpdated", {
           owner: !!existingRole.owner,
-          admin: !!existingRole.admin
+          admin: !!existingRole.admin,
+          moderator: !!existingRole.moderator,
+          role: existingRole.owner ? "owner" : "admin"
         });
       }
 
@@ -866,7 +964,38 @@ io.on("connection", (socket) => {
     }
   });
 
-  // GEBANNTE SPIELER LADEN
+  
+  socket.on("owner:setUserRole", async ({ email, role }) => {
+    const actor = socketRoles[socket.id];
+    if (!actor || !actor.owner) return;
+    email = String(email || "").trim().toLowerCase();
+    role = String(role || "player").toLowerCase();
+    if (!email || email === OWNER_EMAIL) return;
+    if (!["player", "moderator", "admin"].includes(role)) return;
+
+    try {
+      const ok = await setUserRole(email, role);
+      if (ok && onlinePlayers[email]) {
+        const targetSocketId = onlinePlayers[email];
+        const existingRole = socketRoles[targetSocketId] || { email, nickname: email.split("@")[0], owner: false, admin: false, moderator: false };
+        existingRole.admin = role === "admin";
+        existingRole.moderator = role === "moderator" || role === "admin";
+        existingRole.owner = false;
+        existingRole.role = role;
+        socketRoles[targetSocketId] = existingRole;
+        io.to(targetSocketId).emit("player:roleUpdated", {
+          owner: false,
+          admin: existingRole.admin,
+          moderator: existingRole.moderator,
+          role
+        });
+      }
+      socket.emit("owner:setUserRoleResult", { ok, email, role, error: ok ? null : "User nicht gefunden" });
+    } catch (error) {
+      socket.emit("owner:setUserRoleResult", { ok: false, email, role, error: "Serverfehler" });
+    }
+  });
+// GEBANNTE SPIELER LADEN
   socket.on("owner:getBannedPlayers", () => {
     const role = socketRoles[socket.id];
     if (!canModerate(role)) return;
@@ -913,14 +1042,15 @@ io.on("connection", (socket) => {
   // SUPPORT: Spieler/Admin -> Owner
   socket.on("support:message", ({ from, text }) => {
     const role = socketRoles[socket.id];
-    if (!role || !from || !text) return;
+    if (!role || !text) return;
 
     const trimmed = String(text).trim();
     if (!trimmed) return;
 
     for (const ownerSocketId of ownerSockets) {
       io.to(ownerSocketId).emit("owner:supportMessage", {
-        from,
+        from: role.email || from || "unbekannt",
+        nickname: role.nickname || "Player",
         text: trimmed,
         at: Date.now(),
         isAdmin: !!role.admin,
@@ -931,10 +1061,39 @@ io.on("connection", (socket) => {
     socket.emit("support:sent", { ok: true });
   });
 
-  // ANNOUNCEMENTS
+  
+  socket.on("chat:send", ({ text, serverId }) => {
+    const role = socketRoles[socket.id];
+    if (!role || !text) return;
+
+    const message = String(text).trim();
+    if (!message) return;
+
+    let targetServer = userChatServer[role.email] || null;
+    const canChooseServer = !!(role.owner || role.admin || role.moderator);
+    if (canChooseServer && serverId && chatServers[serverId]) {
+      targetServer = serverId;
+    }
+    if (!targetServer || !chatServers[targetServer]) return;
+
+    for (const memberEmail of chatServers[targetServer]) {
+      const sid = onlinePlayers[memberEmail];
+      if (sid) {
+        io.to(sid).emit("chat:message", {
+          serverId: targetServer,
+          nickname: role.nickname || role.email?.split("@")[0] || "Player",
+          role: role.owner ? "owner" : (role.admin ? "admin" : (role.moderator ? "moderator" : "player")),
+          text: message,
+          at: Date.now()
+        });
+      }
+    }
+  });
+
+// ANNOUNCEMENTS
   socket.on("ownerAnnouncement", ({ text }) => {
     const role = socketRoles[socket.id];
-    if (!role || !role.owner) return;
+    if (!role || (!role.owner && !role.moderator)) return;
     io.emit("announcement", { text });
   });
 });

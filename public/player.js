@@ -23,7 +23,9 @@ function initPlayer(email, role = {}) {
   playerSocket.emit("player:online", {
     email: currentPlayerEmail,
     owner: !!role.owner,
-    admin: !!role.admin
+    admin: !!role.admin,
+    moderator: !!role.moderator,
+    nickname: role.nickname || currentPlayerEmail.split("@")[0]
   });
 }
 

@@ -91,6 +91,7 @@ input,button{
 <div id="login">
   <input id="email" name="email" type="email" autocomplete="email" placeholder="E-Mail" required>
   <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required>
+  <input id="nickname" name="nickname" type="text" autocomplete="nickname" placeholder="Nickname" required>
 
   <button id="registerBtn">Registrieren</button>
   <button id="loginBtn" style="display:none;">Login</button>
@@ -151,6 +152,13 @@ input,button{
       <input id="grantAdminEmail" type="email" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="E-Mail für Admin Rechte">
       <button onclick="grantAdmin()">Admin ernennen</button>
       <div id="grantAdminResult"></div>
+
+      <h4>Admin Ränge verwalten</h4>
+      <input id="roleTargetEmail" type="email" autocomplete="off" placeholder="E-Mail des Admin/Mods">
+      <button onclick="setUserRole('player')">Zu Spieler</button>
+      <button onclick="setUserRole('moderator')">Zu Moderator</button>
+      <button onclick="setUserRole('admin')">Zu Admin</button>
+      <div id="roleResult"></div>
       <hr>
     </div>
 
@@ -187,13 +195,17 @@ const socket = window.playerSocket || io();
 
 const emailInput = document.getElementById("email");
 const passwordInput = document.getElementById("password");
+const nicknameInput = document.getElementById("nickname");
 const loginBtn = document.getElementById("loginBtn");
 const registerBtn = document.getElementById("registerBtn");
 
 let email = "";
+let nickname = "";
 let isOwner = false;
 let isAdmin = false;
+let isModerator = false;
 let ownerUnlocked = false;
+let assignedChatServer = null;
 
 const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
@@ -226,8 +238,9 @@ function setAuthButtonsDisabled(disabled){
 registerBtn.onclick = async ()=>{
   const enteredEmail = emailInput.value.trim();
   const enteredPassword = passwordInput.value;
+  const enteredNickname = nicknameInput.value.trim();
 
-  if(!enteredEmail || !enteredPassword){
+  if(!enteredEmail || !enteredPassword || !enteredNickname){
     alert("Bitte E-Mail und Passwort eingeben.");
     return;
   }
@@ -240,14 +253,15 @@ registerBtn.onclick = async ()=>{
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         email: enteredEmail,
-        password: enteredPassword
+        password: enteredPassword,
+        nickname: enteredNickname
       })
     });
 
     const registerData = await registerResponse.json();
 
     if(registerData.ok){
-      enterGame(registerData.owner, registerData.admin);
+      enterGame(registerData.owner, registerData.admin, registerData.moderator, registerData.nickname || enteredNickname);
       return;
     }
 
@@ -259,13 +273,14 @@ registerBtn.onclick = async ()=>{
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           email: enteredEmail,
-          password: enteredPassword
+          password: enteredPassword,
+          nickname: enteredNickname
         })
       });
 
       const loginData = await loginResponse.json();
       if(loginData.ok){
-        enterGame(loginData.owner, loginData.admin);
+        enterGame(loginData.owner, loginData.admin, loginData.moderator, loginData.nickname || enteredNickname);
       } else {
         alert("Account existiert bereits. Bitte korrekt einloggen.");
       }
@@ -287,8 +302,9 @@ registerBtn.onclick = async ()=>{
 loginBtn.onclick = async ()=>{
   const enteredEmail = emailInput.value.trim();
   const enteredPassword = passwordInput.value;
+  const enteredNickname = nicknameInput.value.trim();
 
-  if(!enteredEmail || !enteredPassword){
+  if(!enteredEmail || !enteredPassword || !enteredNickname){
     alert("Bitte E-Mail und Passwort eingeben.");
     return;
   }
@@ -301,14 +317,15 @@ loginBtn.onclick = async ()=>{
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         email: enteredEmail,
-        password: enteredPassword
+        password: enteredPassword,
+        nickname: enteredNickname
       })
     });
 
     const data = await response.json();
 
     if(data.ok){
-      enterGame(data.owner, data.admin);
+      enterGame(data.owner, data.admin, data.moderator, data.nickname || enteredNickname);
     } else {
       alert(data.error || "Falsches Passwort");
     }
@@ -323,11 +340,13 @@ loginBtn.onclick = async ()=>{
 /* =================================================
    ENTER GAME
    ================================================= */
-function enterGame(owner, admin){
+function enterGame(owner, admin, moderator, nick){
   email = emailInput.value;
+  nickname = nick || nicknameInput.value.trim() || email.split("@")[0];
   const OWNER_EMAIL = "till.behner@icloud.com";
   isOwner = owner || email === OWNER_EMAIL;
   isAdmin = admin || isOwner;
+  isModerator = moderator || isAdmin || isOwner;
   ownerUnlocked = false;
 
   document.getElementById("login").style.display="none";
@@ -342,12 +361,17 @@ function enterGame(owner, admin){
   if(!isOwner){
     document.getElementById("supportPanel").style.display = "block";
   }
+  document.getElementById("chatServerSelect").style.display = (isOwner || isAdmin || isModerator) ? "inline" : "none";
 
-  initPlayer(email,{ owner: isOwner, admin: isAdmin });
-  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin });
+  document.getElementById("chatPanel").style.display = "block";
+  document.getElementById("chatServerSelect").style.display = (isOwner || isAdmin || isModerator) ? "inline" : "none";
+
+  initPlayer(email,{ owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
+  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
 
   emailInput.value="";
   passwordInput.value="";
+  nicknameInput.value="";
 }
 
 /* =================================================
@@ -427,7 +451,7 @@ function sendSupportMessage(){
   const status=document.getElementById("supportStatus");
   const text=(input.value || "").trim();
   if(!text) return;
-  socket.emit("support:message", { from: email, text });
+  socket.emit("support:message", { from: email, nickname, text });
   input.value = "";
   status.textContent = "Nachricht gesendet.";
 }
@@ -443,12 +467,20 @@ function askOwnerPassword(){
     return;
   }
 
+  if(!isOwner){
+    ownerUnlocked=true;
+    panel.style.display="block";
+    document.getElementById("ownerOnlyPanel").style.display = "none";
+    document.getElementById("ownerAnnouncementSection").style.display = isModerator ? "block" : "none";
+    return;
+  }
+
   const pw = prompt("Owner Passwort:");
   if(pw==="X9$QvR7!eM2#A8wK@C"){
     ownerUnlocked=true;
     panel.style.display="block";
     document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
-    document.getElementById("ownerAnnouncementSection").style.display = isOwner ? "block" : "none";
+    document.getElementById("ownerAnnouncementSection").style.display = (isOwner || isModerator) ? "block" : "none";
   } else {
     alert("Falsches Passwort");
   }
@@ -458,7 +490,7 @@ function askOwnerPassword(){
    ANNOUNCEMENTS
    ================================================= */
 function sendAnnouncement(){
-  if(!ownerUnlocked || !isOwner) return;
+  if(!ownerUnlocked || (!isOwner && !isModerator)) return;
   const text=document.getElementById("announceText").value;
   socket.emit("ownerAnnouncement",{text});
   document.getElementById("announceText").value="";
@@ -510,14 +542,14 @@ function loadSuspectPlayers(){
   socket.emit("owner:getSuspectPlayers");
 }
 
-function createPlayerActionRow(emailText, metaText){
+function createPlayerActionRow(displayText, metaText, targetEmail){
   const row=document.createElement("div");
   row.style.border = "1px solid #555";
   row.style.padding = "6px";
   row.style.marginBottom = "6px";
 
   const label=document.createElement("div");
-  label.textContent = emailText;
+  label.textContent = displayText;
 
   const meta=document.createElement("div");
   meta.style.fontSize = "14px";
@@ -526,7 +558,7 @@ function createPlayerActionRow(emailText, metaText){
 
   const spectateBtn=document.createElement("button");
   spectateBtn.textContent="Spectate";
-  spectateBtn.onclick=()=>startSpectate(emailText);
+  spectateBtn.onclick=()=>startSpectate(targetEmail);
 
   const banBtn=document.createElement("button");
   banBtn.textContent="Bannen";
@@ -534,7 +566,7 @@ function createPlayerActionRow(emailText, metaText){
   if(protectedRole){
     banBtn.disabled = true;
   }
-  banBtn.onclick=()=>openBanDialog(emailText);
+  banBtn.onclick=()=>openBanDialog(targetEmail);
 
   row.appendChild(label);
   row.appendChild(meta);
@@ -604,10 +636,17 @@ function stopSpectate(){
 
 
 function grantAdmin(){
-  if(!ownerUnlocked || !isOwner) return;
-  const grantEmail = document.getElementById("grantAdminEmail").value.trim();
+  if(!ownerUnlocked || (!isOwner && !isModerator)) return;
+  const grantEmail = document.getElementById("grantAdminEmail").value.trim().toLowerCase();
   if(!grantEmail) return;
   socket.emit("owner:grantAdmin", { email: grantEmail });
+}
+
+function setUserRole(role){
+  if(!ownerUnlocked || !isOwner) return;
+  const targetEmail = document.getElementById("roleTargetEmail").value.trim().toLowerCase();
+  if(!targetEmail) return;
+  socket.emit("owner:setUserRole", { email: targetEmail, role });
 }
 
 function loadBannedPlayers(){
@@ -624,6 +663,13 @@ socket.on("owner:grantAdminResult", (data)=>{
   const box=document.getElementById("grantAdminResult");
   box.textContent = data.ok
     ? `${data.email} ist jetzt Admin.`
+    : `Fehler: ${data.error || "Unbekannt"}`;
+});
+
+socket.on("owner:setUserRoleResult", (data)=>{
+  const box=document.getElementById("roleResult");
+  box.textContent = data.ok
+    ? `${data.email} wurde zu ${data.role}.`
     : `Fehler: ${data.error || "Unbekannt"}`;
 });
 
@@ -688,8 +734,9 @@ socket.on("owner:playersList",(players)=>{
   }
 
   players.forEach(p=>{
-    const roleText = p.owner ? "Owner" : (p.admin ? "Admin" : "Spieler");
-    list.appendChild(createPlayerActionRow(p.email, roleText));
+    const roleText = p.owner ? "Owner" : (p.admin ? "Admin" : (p.moderator ? "Moderator" : "Spieler"));
+    const label = p.emailVisible ? `${p.nickname} (${p.email})` : p.nickname;
+    list.appendChild(createPlayerActionRow(label, roleText, p.email));
   });
 });
 
@@ -708,7 +755,7 @@ socket.on("owner:suspectPlayers",(suspects)=>{
 
   suspects.forEach(player=>{
     const meta = `Rare: ${player.rareCount} | Leg: ${player.legendärCount} | Myth: ${player.mythischCount} | Godly: ${player.godlyCount} | Score: ${player.score}`;
-    list.appendChild(createPlayerActionRow(player.email, meta));
+    list.appendChild(createPlayerActionRow(player.email, meta, player.email));
   });
 });
 
@@ -744,7 +791,7 @@ socket.on("owner:supportMessage", (msg)=>{
   row.style.border = "1px solid #2a2";
   row.style.padding = "6px";
   row.style.marginBottom = "6px";
-  row.textContent = `[${new Date(msg.at || Date.now()).toLocaleTimeString()}] ${msg.from}${msg.isAdmin ? " (Admin)" : ""}: ${msg.text}`;
+  row.textContent = `[${new Date(msg.at || Date.now()).toLocaleTimeString()}] ${msg.nickname || msg.from}${msg.isAdmin ? " (Admin)" : ""}: ${msg.text}`;
   inbox.prepend(row);
 });
 
@@ -756,6 +803,7 @@ socket.on("support:sent", ()=>{
 socket.on("player:roleUpdated", (role)=>{
   isOwner = !!role.owner;
   isAdmin = !!role.admin || isOwner;
+  isModerator = !!role.moderator || isAdmin || isOwner;
 
   const ownerBtn = document.getElementById("ownerBtn");
   if(isOwner || isAdmin){
@@ -766,6 +814,47 @@ socket.on("player:roleUpdated", (role)=>{
   if(!isOwner){
     document.getElementById("supportPanel").style.display = "block";
   }
+  document.getElementById("chatServerSelect").style.display = (isOwner || isAdmin || isModerator) ? "inline" : "none";
+});
+
+function sendChatMessage(){
+  if(!email) return;
+  const input=document.getElementById("chatInput");
+  const text=(input.value || "").trim();
+  if(!text) return;
+  const selected=document.getElementById("chatServerSelect").value || assignedChatServer;
+  socket.emit("chat:send", { text, serverId: selected });
+  input.value="";
+}
+
+socket.on("chat:assignedServer", ({ serverId })=>{
+  assignedChatServer = serverId;
+  const info=document.getElementById("chatServerInfo");
+  info.textContent = `Dein Chat-Server: ${serverId}`;
+  const sel=document.getElementById("chatServerSelect");
+  if(sel && !sel.value) sel.value = serverId;
+});
+
+socket.on("chat:serverList", (servers)=>{
+  const sel=document.getElementById("chatServerSelect");
+  const current=sel.value;
+  sel.innerHTML="";
+  (servers || []).forEach((s)=>{
+    const opt=document.createElement("option");
+    opt.value=s;
+    opt.textContent=s;
+    sel.appendChild(opt);
+  });
+  if(current && (servers || []).includes(current)) sel.value=current;
+  else if(assignedChatServer && (servers || []).includes(assignedChatServer)) sel.value=assignedChatServer;
+});
+
+socket.on("chat:message", (msg)=>{
+  const box=document.getElementById("chatMessages");
+  const row=document.createElement("div");
+  row.textContent = `[${msg.serverId}] ${msg.nickname}: ${msg.text}`;
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
 });
 
 </script>
