@@ -215,13 +215,6 @@ function canModerate(role) {
   return !!(role && (role.owner || role.admin));
 }
 
-async function isPrivilegedEmail(email) {
-  if (!email) return false;
-  if (email === OWNER_EMAIL) return true;
-  const user = await getUserByEmail(email);
-  return !!(user && user.admin);
-}
-
 function rememberPlayerAction(email, input, output, rarity) {
   if (!playerRecentActions[email]) playerRecentActions[email] = [];
   playerRecentActions[email].push({ input, output, rarity, time: Date.now() });
