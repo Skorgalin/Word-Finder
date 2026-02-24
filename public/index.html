@@ -107,6 +107,13 @@ input,button{
 
   <div id="foundItems"></div>
 
+  <div id="supportPanel" style="margin-top:10px;display:none;">
+    <h4>Support an Owner</h4>
+    <input id="supportText" type="text" autocomplete="off" placeholder="Nachricht an Owner (z.B. Entbannungsantrag)">
+    <button onclick="sendSupportMessage()">Senden</button>
+    <div id="supportStatus"></div>
+  </div>
+
   <!-- OWNER PANEL -->
   <div id="ownerPanel">
     <h3>Owner Dashboard</h3>
@@ -150,6 +157,11 @@ input,button{
     <h4>Gebannte Spieler</h4>
     <button onclick="loadBannedPlayers()">Gebannte laden</button>
     <div id="bannedPlayersList"></div>
+
+    <hr>
+
+    <h4>Support-Nachrichten</h4>
+    <div id="ownerSupportInbox"></div>
 
     <hr>
 
@@ -327,6 +339,10 @@ function enterGame(owner, admin){
     ownerBtn.textContent = isOwner ? "Owner" : "Admin";
   }
 
+  if(!isOwner){
+    document.getElementById("supportPanel").style.display = "block";
+  }
+
   initPlayer(email,{ owner: isOwner, admin: isAdmin });
   socket.emit("player:online", { email, owner: isOwner, admin: isAdmin });
 
@@ -403,6 +419,17 @@ function submitItem(){
 function toggleFound(){
   const f=document.getElementById("foundItems");
   f.style.display = f.style.display==="none"?"block":"none";
+}
+
+function sendSupportMessage(){
+  if(!email) return;
+  const input=document.getElementById("supportText");
+  const status=document.getElementById("supportStatus");
+  const text=(input.value || "").trim();
+  if(!text) return;
+  socket.emit("support:message", { from: email, text });
+  input.value = "";
+  status.textContent = "Nachricht gesendet.";
 }
 
 /* =================================================
@@ -702,11 +729,43 @@ socket.on("owner:mappingUpdated", (data)=>{
     const hasOutput = text.includes(`→ ${data.output}`);
     const oldInputMatch = !data.oldInput || text.includes(`${data.oldInput} →`);
     if(hasOutput && oldInputMatch){
-      item.innerHTML = `${data.newInput} → ${data.output} [${rarityLabel(data.rarity)}]`;
+      const hadFirst = text.includes("First Discovery");
+      item.innerHTML = `${data.newInput} → ${data.output} [${rarityLabel(data.rarity)}]${hadFirst ? ' <span class="first">(First Discovery)</span>' : ''}`;
       gameFoundSet.delete(`${data.oldInput}->${data.output}`);
       gameFoundSet.add(`${data.newInput}->${data.output}`);
     }
   });
+});
+
+socket.on("owner:supportMessage", (msg)=>{
+  if(!isOwner) return;
+  const inbox = document.getElementById("ownerSupportInbox");
+  const row = document.createElement("div");
+  row.style.border = "1px solid #2a2";
+  row.style.padding = "6px";
+  row.style.marginBottom = "6px";
+  row.textContent = `[${new Date(msg.at || Date.now()).toLocaleTimeString()}] ${msg.from}${msg.isAdmin ? " (Admin)" : ""}: ${msg.text}`;
+  inbox.prepend(row);
+});
+
+socket.on("support:sent", ()=>{
+  const status=document.getElementById("supportStatus");
+  if(status) status.textContent = "Nachricht wurde an Owner gesendet.";
+});
+
+socket.on("player:roleUpdated", (role)=>{
+  isOwner = !!role.owner;
+  isAdmin = !!role.admin || isOwner;
+
+  const ownerBtn = document.getElementById("ownerBtn");
+  if(isOwner || isAdmin){
+    ownerBtn.style.display = "inline";
+    ownerBtn.textContent = isOwner ? "Owner" : "Admin";
+  }
+
+  if(!isOwner){
+    document.getElementById("supportPanel").style.display = "block";
+  }
 });
 
 </script>

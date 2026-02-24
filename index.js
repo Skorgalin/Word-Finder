@@ -275,6 +275,24 @@ async function createWordMapping(input, output, rarity, discoveredBy, discovered
   if (error) throw error;
 }
 
+async function updateWordDiscovery(input, discoveredBy, discoveredAt) {
+  if (!supabase) {
+    const words = loadWords();
+    if (!words[input]) return;
+    words[input].discoveredBy = discoveredBy;
+    words[input].time = discoveredAt;
+    saveWords(words);
+    return;
+  }
+
+  const { error } = await supabase
+    .from("word_mappings")
+    .update({ discovered_by: discoveredBy, discovered_at: discoveredAt })
+    .eq("input", input);
+
+  if (error) throw error;
+}
+
 async function replaceAllWordMappings(words) {
   if (!supabase) {
     saveWords(words);
@@ -507,9 +525,18 @@ app.post("/submitItem", async (req, res) => {
 
     let firstDiscovery = false;
     const existing = await getWordByInput(normalizedInput);
+    const currentUserPrivileged = await isPrivilegedEmail(email);
 
     // Bereits bekannt: immer denselben gespeicherten Output zurückgeben.
     if (existing) {
+      const previousDiscovererPrivileged = await isPrivilegedEmail(existing.discovered_by || existing.discoveredBy);
+
+      // Owner/Admin Discovery zählt nicht als First Discovery.
+      if (!currentUserPrivileged && previousDiscovererPrivileged) {
+        firstDiscovery = true;
+        await updateWordDiscovery(normalizedInput, email, Date.now());
+      }
+
       rememberPlayerAction(email, normalizedInput, existing.output, existing.rarity || "common");
       return res.json({
         ok: true,
@@ -527,7 +554,7 @@ app.post("/submitItem", async (req, res) => {
 
     await createWordMapping(normalizedInput, output, rarity, email, discoveredAt);
     rememberPlayerAction(email, normalizedInput, output, rarity);
-    firstDiscovery = true;
+    firstDiscovery = !currentUserPrivileged;
 
     res.json({
       ok: true,
@@ -808,11 +835,26 @@ io.on("connection", (socket) => {
 
   // OWNER: ADMIN RECHTE VERGEBEN
   socket.on("owner:grantAdmin", async ({ email }) => {
+    email = String(email || "").trim().toLowerCase();
+    if (!email) return;
     const role = socketRoles[socket.id];
     if (!role || !role.owner) return;
 
     try {
       const ok = await setUserAdmin(email, true);
+
+      if (ok && onlinePlayers[email]) {
+        const targetSocketId = onlinePlayers[email];
+        const existingRole = socketRoles[targetSocketId] || { email, owner: email === OWNER_EMAIL, admin: false };
+        existingRole.admin = true;
+        existingRole.owner = existingRole.owner || email === OWNER_EMAIL;
+        socketRoles[targetSocketId] = existingRole;
+        io.to(targetSocketId).emit("player:roleUpdated", {
+          owner: !!existingRole.owner,
+          admin: !!existingRole.admin
+        });
+      }
+
       socket.emit("owner:grantAdminResult", {
         ok,
         email,
@@ -866,6 +908,27 @@ io.on("connection", (socket) => {
   // SPECTATE STOP
   socket.on("owner:spectateStop", () => {
     delete spectatingOwners[socket.id];
+  });
+
+  // SUPPORT: Spieler/Admin -> Owner
+  socket.on("support:message", ({ from, text }) => {
+    const role = socketRoles[socket.id];
+    if (!role || !from || !text) return;
+
+    const trimmed = String(text).trim();
+    if (!trimmed) return;
+
+    for (const ownerSocketId of ownerSockets) {
+      io.to(ownerSocketId).emit("owner:supportMessage", {
+        from,
+        text: trimmed,
+        at: Date.now(),
+        isAdmin: !!role.admin,
+        isOwner: !!role.owner
+      });
+    }
+
+    socket.emit("support:sent", { ok: true });
   });
 
   // ANNOUNCEMENTS
