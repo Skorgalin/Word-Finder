@@ -112,109 +112,128 @@ async function getLeaderboard() {
 
 
 async function getUserByEmail(email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) return null;
+
   if (!supabase) {
     const users = loadUsers();
-    return users[email] ? normalizeUserRole({ email, ...users[email] }, email) : null;
+    return users[normalizedEmail] ? normalizeUserRole({ email: normalizedEmail, ...users[normalizedEmail] }, normalizedEmail) : null;
   }
+
+  const selectCandidates = [
+    "email,password,admin,role,nickname",
+    "email,password,owner,role,nickname",
+    "email,password,admin,nickname",
+    "email,password,owner,nickname",
+    "email,password,admin,role",
+    "email,password,owner,role",
+    "email,password,admin",
+    "email,password,owner"
+  ];
 
   let data = null;
   let error = null;
-
-  ({ data, error } = await supabase
-    .from("users")
-    .select("email,password,admin,role,nickname")
-    .eq("email", email)
-    .maybeSingle());
-
-  // Fallback für ältere Schema-Variante mit owner-Spalte statt admin.
-  if (error && String(error.message || "").toLowerCase().includes("column") && String(error.message || "").includes("admin")) {
+  for (const selectFields of selectCandidates) {
     ({ data, error } = await supabase
       .from("users")
-      .select("email,password,owner,role,nickname")
-      .eq("email", email)
+      .select(selectFields)
+      .eq("email", normalizedEmail)
       .maybeSingle());
+    if (!error) break;
   }
 
   if (error) {
     if (canFallbackToLocal(error)) {
       const users = loadUsers();
-      return users[email] ? normalizeUserRole({ email, ...users[email] }, email) : null;
+      return users[normalizedEmail] ? normalizeUserRole({ email: normalizedEmail, ...users[normalizedEmail] }, normalizedEmail) : null;
     }
     throw error;
   }
-  return normalizeUserRole(data, email);
+  return normalizeUserRole(data, normalizedEmail);
 }
 
 async function createUser(email, passwordHash, nickname) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) throw new Error("email_required");
+  const safeNickname = String(nickname || "").trim() || normalizedEmail.split("@")[0];
+
   if (!supabase) {
     const users = loadUsers();
-    users[email] = { password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname };
+    users[normalizedEmail] = { password: passwordHash, admin: normalizedEmail === OWNER_EMAIL, role: normalizedEmail === OWNER_EMAIL ? "owner" : "player", nickname: safeNickname };
     saveUsers(users);
     return;
   }
 
-  let result = await supabase
-    .from("users")
-    .insert([{ email, password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname }]);
+  const insertCandidates = [
+    { email: normalizedEmail, password: passwordHash, admin: normalizedEmail === OWNER_EMAIL, role: normalizedEmail === OWNER_EMAIL ? "owner" : "player", nickname: safeNickname },
+    { email: normalizedEmail, password: passwordHash, owner: normalizedEmail === OWNER_EMAIL, role: normalizedEmail === OWNER_EMAIL ? "owner" : "player", nickname: safeNickname },
+    { email: normalizedEmail, password: passwordHash, admin: normalizedEmail === OWNER_EMAIL, nickname: safeNickname },
+    { email: normalizedEmail, password: passwordHash, owner: normalizedEmail === OWNER_EMAIL, nickname: safeNickname },
+    { email: normalizedEmail, password: passwordHash, admin: normalizedEmail === OWNER_EMAIL },
+    { email: normalizedEmail, password: passwordHash, owner: normalizedEmail === OWNER_EMAIL }
+  ];
 
-  if (result.error && String(result.error.message || "").toLowerCase().includes("column") && String(result.error.message || "").includes("admin")) {
-    // Fallback für ältere Schema-Variante mit owner-Spalte.
-    result = await supabase
-      .from("users")
-      .insert([{ email, password: passwordHash, owner: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname }]);
+  let result = null;
+  for (const payload of insertCandidates) {
+    result = await supabase.from("users").insert([payload]);
+    if (!result.error) break;
   }
 
-  if (result.error) {
-    if (canFallbackToLocal(result.error)) {
+  if (!result || result.error) {
+    if (canFallbackToLocal(result?.error)) {
       const users = loadUsers();
-      users[email] = { password: passwordHash, admin: email === OWNER_EMAIL, role: email === OWNER_EMAIL ? "owner" : "player", nickname };
+      users[normalizedEmail] = { password: passwordHash, admin: normalizedEmail === OWNER_EMAIL, role: normalizedEmail === OWNER_EMAIL ? "owner" : "player", nickname: safeNickname };
       saveUsers(users);
       return;
     }
-    throw result.error;
+    throw result?.error || new Error("create_user_failed");
   }
 }
 
 
 async function setUserRole(email, roleName) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
   const role = String(roleName || "player").toLowerCase();
   const admin = role === "admin" || role === "owner";
+  if (!normalizedEmail) return false;
 
   if (!supabase) {
     const users = loadUsers();
-    if (!users[email]) return false;
-    users[email].admin = !!admin;
-    users[email].role = role;
+    if (!users[normalizedEmail]) return false;
+    users[normalizedEmail].admin = !!admin;
+    users[normalizedEmail].role = role;
     saveUsers(users);
     return true;
   }
 
-  let query = await supabase
-    .from("users")
-    .update({ admin: !!admin, role })
-    .eq("email", email)
-    .select("email")
-    .maybeSingle();
+  const updateCandidates = [
+    { admin: !!admin, role },
+    { owner: !!admin, role },
+    { admin: !!admin },
+    { owner: !!admin }
+  ];
 
-  if (query.error && String(query.error.message || "").toLowerCase().includes("column") && String(query.error.message || "").includes("admin")) {
+  let query = null;
+  for (const payload of updateCandidates) {
     query = await supabase
       .from("users")
-      .update({ owner: !!admin, role })
-      .eq("email", email)
+      .update(payload)
+      .eq("email", normalizedEmail)
       .select("email")
       .maybeSingle();
+    if (!query.error) break;
   }
 
-  if (query.error) {
-    if (canFallbackToLocal(query.error)) {
+  if (!query || query.error) {
+    if (canFallbackToLocal(query?.error)) {
       const users = loadUsers();
-      if (!users[email]) return false;
-      users[email].admin = !!admin;
-      users[email].role = role;
+      if (!users[normalizedEmail]) return false;
+      users[normalizedEmail].admin = !!admin;
+      users[normalizedEmail].role = role;
       saveUsers(users);
       return true;
     }
-    throw query.error;
+    throw query?.error || new Error("set_user_role_failed");
   }
   return !!query.data;
 }
@@ -224,20 +243,28 @@ async function setUserAdmin(email, admin) {
 }
 
 async function updateUserNickname(email, nickname) {
-  if (!nickname) return;
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const safeNickname = String(nickname || "").trim();
+  if (!normalizedEmail || !safeNickname) return;
+
   if (!supabase) {
     const users = loadUsers();
-    if (!users[email]) return;
-    users[email].nickname = nickname;
+    if (!users[normalizedEmail]) return;
+    users[normalizedEmail].nickname = safeNickname;
     saveUsers(users);
     return;
   }
 
-  const { error } = await supabase.from("users").update({ nickname }).eq("email", email);
+  let query = await supabase.from("users").update({ nickname: safeNickname }).eq("email", normalizedEmail);
+  if (query.error) {
+    query = await supabase.from("users").update({ nickname: safeNickname, updated_at: Date.now() }).eq("email", normalizedEmail);
+  }
+
+  const { error } = query;
   if (error && canFallbackToLocal(error)) {
     const users = loadUsers();
-    if (!users[email]) return;
-    users[email].nickname = nickname;
+    if (!users[normalizedEmail]) return;
+    users[normalizedEmail].nickname = safeNickname;
     saveUsers(users);
     return;
   }
@@ -364,9 +391,9 @@ function findInputByOutput(words, output) {
 }
 
 function makeOwnerInput(words) {
-  let candidate = `input_${Math.random().toString(36).slice(2, 8)}`;
+  let candidate = `${Math.random().toString(36).slice(2, 10)}`;
   while (words[candidate]) {
-    candidate = `input_${Math.random().toString(36).slice(2, 8)}`;
+    candidate = `${Math.random().toString(36).slice(2, 10)}`;
   }
   return candidate;
 }
@@ -493,7 +520,8 @@ function calculateSuspectPlayers(words) {
 // CHECK EMAIL
 app.post("/checkEmail", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email } = req.body;
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!email) return res.json({ exists: false });
   try {
     const user = await getUserByEmail(email);
     res.json({ exists: !!user });
@@ -506,7 +534,10 @@ app.post("/checkEmail", async (req, res) => {
 // REGISTER
 app.post("/register", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email, password, nickname } = req.body;
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const nickname = String(req.body?.nickname || "").trim();
+  if (!email || !password) return res.status(400).json({ ok: false, error: "email_password_required" });
 
   try {
     const existingUser = await getUserByEmail(email);
@@ -526,7 +557,10 @@ app.post("/register", async (req, res) => {
 // LOGIN
 app.post("/login", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email, password, nickname } = req.body;
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  const nickname = String(req.body?.nickname || "").trim();
+  if (!email || !password) return res.json({ ok: false });
 
   try {
     const user = await getUserByEmail(email);
@@ -535,9 +569,9 @@ app.post("/login", async (req, res) => {
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.json({ ok: false });
 
-    if (nickname && String(nickname).trim()) {
-      await updateUserNickname(email, String(nickname).trim());
-      user.nickname = String(nickname).trim();
+    if (nickname) {
+      await updateUserNickname(email, nickname);
+      user.nickname = nickname;
     }
 
     res.json({ ok: true, owner: !!user.owner, admin: !!user.admin, moderator: !!user.moderator, nickname: user.nickname });
@@ -552,7 +586,9 @@ app.post("/login", async (req, res) => {
 // WORD SUBMIT + FIRST DISCOVERY
 app.post("/submitItem", async (req, res) => {
   if (!ensurePersistentStore(res)) return;
-  const { email, input } = req.body;
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const input = req.body?.input;
+  if (!email) return res.json({ ok: false, error: "email_required" });
   const normalizedInput = String(input || "").trim();
   if (!normalizedInput) return res.json({ ok: false });
 
@@ -736,6 +772,8 @@ io.on("connection", (socket) => {
   /* PLAYER ONLINE */
   socket.on("player:online", async ({ email, nickname }) => {
     try {
+      email = String(email || "").trim().toLowerCase();
+      if (!email) return;
       const user = await getUserByEmail(email);
       if (nickname && String(nickname).trim()) {
         await updateUserNickname(email, String(nickname).trim());
@@ -834,6 +872,8 @@ io.on("connection", (socket) => {
 
   /* LIVE TYPING (SPECTATE) */
   socket.on("player:typing", ({ email, text }) => {
+    email = String(email || "").trim().toLowerCase();
+    if (!email) return;
     for (const ownerId in spectatingOwners) {
       if (spectatingOwners[ownerId] === email) {
         io.to(ownerId).emit("spectate:typing", { email, text });
@@ -843,6 +883,8 @@ io.on("connection", (socket) => {
 
   /* ITEM FOUND (SPECTATE) */
   socket.on("player:itemFound", ({ email, input, output }) => {
+    email = String(email || "").trim().toLowerCase();
+    if (!email) return;
     for (const ownerId in spectatingOwners) {
       if (spectatingOwners[ownerId] === email) {
         io.to(ownerId).emit("spectate:itemFound", {

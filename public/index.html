@@ -219,6 +219,15 @@ let assignedChatServer = null;
 
 const gameFoundSet = new Set(); // Für Found Items ohne Duplikate
 
+function emitOnlinePresence(){
+  if(!email) return;
+  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
+}
+
+socket.on("connect", ()=>{
+  emitOnlinePresence();
+});
+
 /* =================================================
    EMAIL CHECK
    ================================================= */
@@ -377,7 +386,7 @@ function enterGame(owner, admin, moderator, nick){
   document.getElementById("chatServerSelect").style.display = (isOwner || isAdmin || isModerator) ? "inline" : "none";
 
   initPlayer(email,{ owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
-  socket.emit("player:online", { email, owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
+  emitOnlinePresence();
 
   emailInput.value="";
   passwordInput.value="";
@@ -646,7 +655,7 @@ function stopSpectate(){
 
 
 function grantAdmin(){
-  if(!ownerUnlocked || (!isOwner && !isModerator)) return;
+  if(!ownerUnlocked || !isOwner) return;
   const grantEmail = document.getElementById("grantAdminEmail").value.trim().toLowerCase();
   if(!grantEmail) return;
   socket.emit("owner:grantAdmin", { email: grantEmail });
