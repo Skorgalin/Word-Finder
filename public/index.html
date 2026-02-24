@@ -126,7 +126,7 @@ input,button{
 
   <!-- OWNER PANEL -->
   <div id="ownerPanel">
-    <h3>Owner Dashboard</h3>
+    <h3 id="panelTitle">Owner Panel</h3>
 
     <div id="ownerAnnouncementSection">
       <input id="announceText" type="text" autocomplete="off" placeholder="Ankündigung">
@@ -360,22 +360,18 @@ loginBtn.onclick = async ()=>{
    ENTER GAME
    ================================================= */
 function enterGame(owner, admin, moderator, nick){
-  email = emailInput.value;
+  email = emailInput.value.trim().toLowerCase();
   nickname = nick || nicknameInput.value.trim() || email.split("@")[0];
   const OWNER_EMAIL = "till.behner@icloud.com";
   isOwner = owner || email === OWNER_EMAIL;
   isAdmin = admin || isOwner;
-  isModerator = moderator || isAdmin || isOwner;
+  isModerator = moderator || isOwner;
   ownerUnlocked = false;
 
   document.getElementById("login").style.display="none";
   document.getElementById("game").style.display="flex";
 
-  if(isOwner || isAdmin){
-    const ownerBtn = document.getElementById("ownerBtn");
-    ownerBtn.style.display="inline";
-    ownerBtn.textContent = isOwner ? "Owner" : "Admin";
-  }
+  refreshPanelIdentity();
 
   if(!isOwner){
     document.getElementById("supportPanel").style.display = "block";
@@ -489,8 +485,7 @@ function askOwnerPassword(){
   if(!isOwner){
     ownerUnlocked=true;
     panel.style.display="block";
-    document.getElementById("ownerOnlyPanel").style.display = "none";
-    document.getElementById("ownerAnnouncementSection").style.display = isModerator ? "block" : "none";
+    refreshPanelIdentity();
     return;
   }
 
@@ -498,8 +493,7 @@ function askOwnerPassword(){
   if(pw==="X9$QvR7!eM2#A8wK@C"){
     ownerUnlocked=true;
     panel.style.display="block";
-    document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
-    document.getElementById("ownerAnnouncementSection").style.display = (isOwner || isModerator) ? "block" : "none";
+    refreshPanelIdentity();
   } else {
     alert("Falsches Passwort");
   }
@@ -527,7 +521,7 @@ socket.on("announcement",data=>{
    OWNER SEARCH
    ================================================= */
 function ownerSearch(){
-  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  if(!ownerUnlocked || !isOwner) return;
 
   const output = document.getElementById("ownerSearchInput").value.trim();
   const desiredInput = document.getElementById("ownerDesiredInput").value.trim();
@@ -536,7 +530,7 @@ function ownerSearch(){
   fetch("/ownerSearch",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ output, desiredInput, rarity })
+    body:JSON.stringify({ email, output, desiredInput, rarity })
   })
   .then(r=>r.json())
   .then(d=>{
@@ -822,13 +816,8 @@ socket.on("support:sent", ()=>{
 socket.on("player:roleUpdated", (role)=>{
   isOwner = !!role.owner;
   isAdmin = !!role.admin || isOwner;
-  isModerator = !!role.moderator || isAdmin || isOwner;
-
-  const ownerBtn = document.getElementById("ownerBtn");
-  if(isOwner || isAdmin){
-    ownerBtn.style.display = "inline";
-    ownerBtn.textContent = isOwner ? "Owner" : "Admin";
-  }
+  isModerator = !!role.moderator || isOwner;
+  refreshPanelIdentity();
 
   if(!isOwner){
     document.getElementById("supportPanel").style.display = "block";

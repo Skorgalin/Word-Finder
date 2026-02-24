@@ -405,7 +405,7 @@ function normalizeUserRole(user, emailFallback = "") {
   const isOwner = email === OWNER_EMAIL;
   const role = isOwner ? "owner" : (user.role || (user.admin || user.owner ? "admin" : "player"));
   const isAdmin = role === "admin" || role === "owner";
-  const isModerator = role === "moderator" || isAdmin;
+  const isModerator = role === "moderator" || isOwner;
   return {
     ...user,
     email,
@@ -574,7 +574,7 @@ app.post("/login", async (req, res) => {
       user.nickname = nickname;
     }
 
-    res.json({ ok: true, owner: !!user.owner, admin: !!user.admin, moderator: !!user.moderator, nickname: user.nickname });
+    res.json({ ok: true, owner: !!user.owner, admin: !!user.admin, moderator: !!user.moderator, role: user.role, nickname: user.nickname });
   } catch (error) {
     console.error("login Fehler:", error.message);
     res.status(500).json({ ok: false });
@@ -659,6 +659,10 @@ app.post("/submitItem", async (req, res) => {
 async function handleOwnerSearch(req, res) {
   if (!ensurePersistentStore(res)) return;
   const { output, desiredInput, rarity } = req.body;
+  const requesterEmail = String(req.body?.email || "").trim().toLowerCase();
+  if (requesterEmail !== OWNER_EMAIL) {
+    return res.status(403).json({ ok: false, error: "owner_only" });
+  }
   const requestedRarity = String(rarity || "").trim().toLowerCase();
   const hasRarityOverride = ["common", "selten", "legendär", "mythisch", "godly"].includes(requestedRarity);
 
@@ -781,6 +785,7 @@ io.on("connection", (socket) => {
       const role = {
         email,
         nickname: (nickname && String(nickname).trim()) || (user && user.nickname) || email.split("@")[0],
+        role: (user && user.role) || (email === OWNER_EMAIL ? "owner" : (user && user.admin ? "admin" : "player")),
         owner: email === OWNER_EMAIL,
         admin: !!(user && user.admin),
         moderator: !!(user && user.moderator)
@@ -1004,8 +1009,9 @@ io.on("connection", (socket) => {
         const targetSocketId = onlinePlayers[email];
         const existingRole = socketRoles[targetSocketId] || { email, owner: email === OWNER_EMAIL, admin: false, moderator: false };
         existingRole.admin = true;
-        existingRole.moderator = true;
+        existingRole.moderator = false;
         existingRole.owner = existingRole.owner || email === OWNER_EMAIL;
+        existingRole.role = existingRole.owner ? "owner" : "admin";
         socketRoles[targetSocketId] = existingRole;
         io.to(targetSocketId).emit("player:roleUpdated", {
           owner: !!existingRole.owner,
@@ -1041,7 +1047,7 @@ io.on("connection", (socket) => {
         const targetSocketId = onlinePlayers[email];
         const existingRole = socketRoles[targetSocketId] || { email, nickname: email.split("@")[0], owner: false, admin: false, moderator: false };
         existingRole.admin = role === "admin";
-        existingRole.moderator = role === "moderator" || role === "admin";
+        existingRole.moderator = role === "moderator";
         existingRole.owner = false;
         existingRole.role = role;
         socketRoles[targetSocketId] = existingRole;
@@ -1155,7 +1161,7 @@ io.on("connection", (socket) => {
 // ANNOUNCEMENTS
   socket.on("ownerAnnouncement", ({ text }) => {
     const role = socketRoles[socket.id];
-    if (!role || (!role.owner && !role.moderator)) return;
+    if (!role || (!role.owner && role.role !== "moderator")) return;
     io.emit("announcement", { text });
   });
 });
