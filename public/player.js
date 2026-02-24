@@ -1,24 +1,31 @@
 /* =====================================================
    PLAYER.JS
    - Spielerstatus & Live Typing
-   - Spectate / Admin Funktionen
+   - Spectate / Owner Funktionen
    ===================================================== */
 
-const playerSocket = io();
+window.playerSocket = window.playerSocket || io();
+const playerSocket = window.playerSocket;
 
 /* ================= SPIELER STATUS ================= */
 let currentPlayerEmail = "";
 let isSpectating = false;
+let banOverlay = null;
+let banCountdownInterval = null;
 
 /* ================= FOUND ITEMS SET ================= */
 const foundSet = new Set(); // NEU: für keine Duplikate in Found Items
 
 /* Wird von index.html beim Login aufgerufen */
-function initPlayer(email) {
+function initPlayer(email, role = {}) {
   currentPlayerEmail = email;
 
   playerSocket.emit("player:online", {
-    email: currentPlayerEmail
+    email: currentPlayerEmail,
+    owner: !!role.owner,
+    admin: !!role.admin,
+    moderator: !!role.moderator,
+    nickname: role.nickname || currentPlayerEmail.split("@")[0]
   });
 }
 
@@ -36,7 +43,7 @@ if (wordInput) {
 /* ================= ITEM GEFUNDEN ================= */
 function notifyItemFound(input, output) {
   const key = input + "->" + output;
-  if (foundSet.has(key)) return; // Schon angezeigt, nichts tun
+  if (foundSet.has(key)) return;
   foundSet.add(key);
 
   playerSocket.emit("player:itemFound", {
@@ -44,88 +51,89 @@ function notifyItemFound(input, output) {
     input,
     output
   });
+}
 
-  const div = document.createElement("div");
-  div.className = "foundItem";
-  div.innerHTML = input + " → " + output;
-  const foundContainer = document.getElementById("foundItems");
-  if (foundContainer) foundContainer.prepend(div);
+function formatDuration(totalSeconds) {
+  const safe = Math.max(0, Number(totalSeconds) || 0);
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const s = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function clearBanOverlay() {
+  if (banCountdownInterval) {
+    clearInterval(banCountdownInterval);
+    banCountdownInterval = null;
+  }
+  if (banOverlay && banOverlay.parentNode) {
+    banOverlay.parentNode.removeChild(banOverlay);
+  }
+  banOverlay = null;
+  if (wordInput) wordInput.disabled = false;
+}
+
+function showBanOverlay(data) {
+  clearBanOverlay();
+
+  let remaining = data.permanent ? null : Math.max(0, Number(data.remaining) || 0);
+  banOverlay = document.createElement("div");
+  banOverlay.style.position = "fixed";
+  banOverlay.style.top = "0";
+  banOverlay.style.left = "0";
+  banOverlay.style.width = "100%";
+  banOverlay.style.height = "100%";
+  banOverlay.style.background = "rgba(0,0,0,0.95)";
+  banOverlay.style.color = "red";
+  banOverlay.style.fontSize = "20px";
+  banOverlay.style.display = "flex";
+  banOverlay.style.flexDirection = "column";
+  banOverlay.style.justifyContent = "center";
+  banOverlay.style.alignItems = "center";
+  banOverlay.style.zIndex = "9999";
+
+  const reason = document.createElement("p");
+  reason.textContent = `Grund: ${data.reason || "-"}`;
+
+  const duration = document.createElement("p");
+  duration.textContent = data.permanent
+    ? "Dauer: Permanent"
+    : `Verbleibend: ${formatDuration(remaining)}`;
+
+  banOverlay.innerHTML = "<h1>Du wurdest gebannt!</h1>";
+  banOverlay.appendChild(reason);
+  banOverlay.appendChild(duration);
+  document.body.appendChild(banOverlay);
+
+  if (!data.permanent) {
+    banCountdownInterval = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      duration.textContent = `Verbleibend: ${formatDuration(remaining)}`;
+    }, 1000);
+  }
+
+  if (wordInput) wordInput.disabled = true;
 }
 
 /* ================= BAN / OFFLINE ================= */
 playerSocket.on("player:banned", (data) => {
-  const overlay = document.createElement("div");
-  overlay.style.position = "fixed";
-  overlay.style.top = "0";
-  overlay.style.left = "0";
-  overlay.style.width = "100%";
-  overlay.style.height = "100%";
-  overlay.style.background = "rgba(0,0,0,0.95)";
-  overlay.style.color = "red";
-  overlay.style.fontSize = "20px";
-  overlay.style.display = "flex";
-  overlay.style.flexDirection = "column";
-  overlay.style.justifyContent = "center";
-  overlay.style.alignItems = "center";
-  overlay.style.zIndex = "9999";
-  overlay.innerHTML = `
-    <h1>Du wurdest gebannt!</h1>
-    <p>Grund: ${data.reason}</p>
-    <p>Dauer: ${data.remaining} Sekunden</p>
-  `;
-  document.body.appendChild(overlay);
-  if(wordInput) wordInput.disabled = true;
+  showBanOverlay(data || {});
+});
+
+playerSocket.on("player:unbanned", () => {
+  clearBanOverlay();
+  alert("Du wurdest entbannt.");
 });
 
 /* ================= SPECTATE ================= */
-playerSocket.on("spectate:start", (data) => {
+playerSocket.on("spectate:start", () => {
   isSpectating = true;
-  alert("Admin beobachtet dich jetzt (Spectate aktiv).");
+  alert("Owner beobachtet dich jetzt (Spectate aktiv).");
 });
 
 playerSocket.on("spectate:stop", () => {
   isSpectating = false;
-  alert("Admin hat Spectate beendet.");
-});
-
-/* ================= ADMIN EVENTS ================= */
-
-/* Admin: Spielerliste empfangen */
-playerSocket.on("admin:playersList", (players) => {
-  const panel = document.getElementById("playersList");
-  if (!panel) return;
-  panel.innerHTML = "";
-  players.forEach(p => {
-    const div = document.createElement("div");
-    div.style.border = "1px solid #555";
-    div.style.padding = "5px";
-    div.style.margin = "3px";
-    div.textContent = `${p.email} | Online: ${p.online || "Ja"} | Banned: ${p.banned ? p.banned.reason : "Nein"}`;
-    
-    // Buttons für Spectate / Ban
-    const spectateBtn = document.createElement("button");
-    spectateBtn.textContent = "Spectate";
-    spectateBtn.onclick = () => {
-      playerSocket.emit("admin:spectateStart", { email: p.email });
-    };
-    const banBtn = document.createElement("button");
-    banBtn.textContent = "Bannen";
-    banBtn.onclick = () => {
-      const reason = prompt("Grund für Ban:");
-      const duration = parseInt(prompt("Dauer in Sekunden:"));
-      if (!reason || !duration) return;
-      playerSocket.emit("admin:banPlayer", { email: p.email, reason, duration });
-    };
-    div.appendChild(spectateBtn);
-    div.appendChild(banBtn);
-
-    panel.appendChild(div);
-  });
-});
-
-/* Admin: Bann erfolgreich */
-playerSocket.on("admin:banSuccess", (data) => {
-  alert(`${data.email} wurde gebannt.`);
+  alert("Owner hat Spectate beendet.");
 });
 
 /* ================= OFFLINE ================= */
