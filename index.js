@@ -122,7 +122,7 @@ async function getUserByEmail(email) {
 
   ({ data, error } = await supabase
     .from("users")
-    .select("email,password,admin")
+    .select("email,password,admin,role,nickname")
     .eq("email", email)
     .maybeSingle());
 
@@ -130,7 +130,7 @@ async function getUserByEmail(email) {
   if (error && String(error.message || "").toLowerCase().includes("column") && String(error.message || "").includes("admin")) {
     ({ data, error } = await supabase
       .from("users")
-      .select("email,password,owner")
+      .select("email,password,owner,role,nickname")
       .eq("email", email)
       .maybeSingle());
   }
@@ -623,6 +623,8 @@ app.post("/submitItem", async (req, res) => {
 async function handleOwnerSearch(req, res) {
   if (!ensurePersistentStore(res)) return;
   const { output, desiredInput, rarity } = req.body;
+  const requestedRarity = String(rarity || "").trim().toLowerCase();
+  const hasRarityOverride = ["common", "selten", "legendär", "mythisch", "godly"].includes(requestedRarity);
 
   const normalizedOutput = String(output || "").trim();
   if (!normalizedOutput) {
@@ -635,7 +637,7 @@ async function handleOwnerSearch(req, res) {
 
     if (!existingInput) {
       const inputToUse = String(desiredInput || "").trim() || makeOwnerInput(words);
-      const rarityToUse = rarity || "common";
+      const rarityToUse = hasRarityOverride ? requestedRarity : pickRarity();
       words[inputToUse] = {
         output: normalizedOutput,
         rarity: rarityToUse,
@@ -656,7 +658,7 @@ async function handleOwnerSearch(req, res) {
 
     const current = words[existingInput] || {};
     const targetInput = String(desiredInput || "").trim() || existingInput;
-    const targetRarity = rarity || current.rarity || "common";
+    const targetRarity = hasRarityOverride ? requestedRarity : (current.rarity || "common");
 
     if (targetInput !== existingInput) {
       if (!words[targetInput]) {
@@ -790,6 +792,23 @@ io.on("connection", (socket) => {
   });
 
   /* PLAYER OFFLINE */
+  socket.on("player:offline", ({ email }) => {
+    if (email && onlinePlayers[email] === socket.id) {
+      delete onlinePlayers[email];
+    }
+    const role = socketRoles[socket.id];
+    if (role && role.email) {
+      const sid = userChatServer[role.email];
+      if (sid && chatServers[sid]) {
+        chatServers[sid].delete(role.email);
+        if (chatServers[sid].size === 0) delete chatServers[sid];
+      }
+      delete userChatServer[role.email];
+    }
+    io.emit("chat:serverList", Object.keys(chatServers));
+    io.emit("owner:onlineCount", Object.keys(onlinePlayers).length);
+  });
+
   socket.on("disconnect", () => {
     for (const email in onlinePlayers) {
       if (onlinePlayers[email] === socket.id) {
@@ -843,6 +862,7 @@ io.on("connection", (socket) => {
   // PLAYER LIST
   socket.on("owner:getPlayers", () => {
     const requester = socketRoles[socket.id] || {};
+    if (!canModerate(requester)) return;
     const players = Object.keys(onlinePlayers).map(email => {
       const sid = onlinePlayers[email];
       const role = socketRoles[sid] || { owner: email === OWNER_EMAIL, admin: false, moderator: false, nickname: email.split("@")[0] };

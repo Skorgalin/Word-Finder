@@ -115,6 +115,15 @@ input,button{
     <div id="supportStatus"></div>
   </div>
 
+  <div id="chatPanel" style="margin-top:10px;display:none;">
+    <h4>Server Chat</h4>
+    <div id="chatServerInfo"></div>
+    <select id="chatServerSelect" style="display:none;"></select>
+    <div id="chatMessages" style="max-height:180px;overflow:auto;border:1px solid #333;padding:6px;margin:6px 0;"></div>
+    <input id="chatInput" type="text" autocomplete="off" placeholder="Chat Nachricht">
+    <button onclick="sendChatMessage()">Chat senden</button>
+  </div>
+
   <!-- OWNER PANEL -->
   <div id="ownerPanel">
     <h3>Owner Dashboard</h3>
@@ -129,6 +138,7 @@ input,button{
     <input id="ownerSearchInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Output">
     <input id="ownerDesiredInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Gewünschter Input (optional)">
     <select id="ownerRaritySelect">
+      <option value="">Seltenheit beibehalten/zufällig</option>
       <option value="common">COMMON</option>
       <option value="selten">SELTEN</option>
       <option value="legendär">LEGENDÄR</option>
@@ -241,7 +251,7 @@ registerBtn.onclick = async ()=>{
   const enteredNickname = nicknameInput.value.trim();
 
   if(!enteredEmail || !enteredPassword || !enteredNickname){
-    alert("Bitte E-Mail und Passwort eingeben.");
+    alert("Bitte E-Mail, Passwort und Nickname eingeben.");
     return;
   }
 
@@ -305,7 +315,7 @@ loginBtn.onclick = async ()=>{
   const enteredNickname = nicknameInput.value.trim();
 
   if(!enteredEmail || !enteredPassword || !enteredNickname){
-    alert("Bitte E-Mail und Passwort eingeben.");
+    alert("Bitte E-Mail, Passwort und Nickname eingeben.");
     return;
   }
 
@@ -538,7 +548,7 @@ function ownerSearch(){
 let currentSpectateEmail = "";
 
 function loadSuspectPlayers(){
-  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin && !isModerator)) return;
   socket.emit("owner:getSuspectPlayers");
 }
 
@@ -576,7 +586,7 @@ function createPlayerActionRow(displayText, metaText, targetEmail){
 }
 
 function loadPlayers(){
-  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin && !isModerator)) return;
   socket.emit("owner:getPlayers");
 }
 
@@ -650,12 +660,12 @@ function setUserRole(role){
 }
 
 function loadBannedPlayers(){
-  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin && !isModerator)) return;
   socket.emit("owner:getBannedPlayers");
 }
 
 function unbanPlayer(playerEmail){
-  if(!ownerUnlocked || (!isOwner && !isAdmin)) return;
+  if(!ownerUnlocked || (!isOwner && !isAdmin && !isModerator)) return;
   socket.emit("owner:unbanPlayer", { email: playerEmail });
 }
 
