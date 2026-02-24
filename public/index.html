@@ -224,30 +224,6 @@ function emitOnlinePresence(){
   socket.emit("player:online", { email, owner: isOwner, admin: isAdmin, moderator: isModerator, nickname });
 }
 
-function getPanelType(){
-  if(isOwner) return "Owner";
-  if(isModerator) return "Moderator";
-  if(isAdmin) return "Admin";
-  return "";
-}
-
-function refreshPanelIdentity(){
-  const panelType = getPanelType();
-  const btn = document.getElementById("ownerBtn");
-  const title = document.getElementById("panelTitle");
-
-  if(panelType){
-    btn.style.display = "inline";
-    btn.textContent = panelType;
-    title.textContent = `${panelType} Panel`;
-  } else {
-    btn.style.display = "none";
-  }
-
-  document.getElementById("ownerOnlyPanel").style.display = isOwner ? "block" : "none";
-  document.getElementById("ownerAnnouncementSection").style.display = (isOwner || isModerator) ? "block" : "none";
-}
-
 socket.on("connect", ()=>{
   emitOnlinePresence();
 });
